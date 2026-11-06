@@ -92,6 +92,57 @@ describe('Baseline', () => {
     expect(baseline.toSignals(face(0.6), 3732).eyeClosure).toBeCloseTo(0.5);
   });
 
+  describe('when eyes never read as open', () => {
+    it.each([0.52, 0.6])('resting closure %f freezes on the fallback after 10s', (resting) => {
+      const baseline = new Baseline();
+      feed(baseline, face(resting), 0, 9900);
+      expect(baseline.toSignals(face(resting), 9900).eyeClosure).toBeCloseTo(resting);
+
+      feed(baseline, face(resting), 9966, 10100);
+      expect(baseline.toSignals(face(resting), 10100).eyeClosure).toBeCloseTo(0);
+      expect(baseline.toSignals(face(1), 10166).eyeClosure).toBeCloseTo(1);
+    });
+
+    it('blinks do not lift the fallback, because it uses a low percentile', () => {
+      const baseline = new Baseline();
+      for (let t = 0; t < 10100; t += STEP_MS) {
+        baseline.toSignals(face(t % 1000 < 200 ? 1 : 0.6), t);
+      }
+
+      expect(baseline.toSignals(face(0.6), 10166).eyeClosure).toBeCloseTo(0);
+    });
+
+    it('the fallback measures pitch from the samples it saw', () => {
+      const baseline = new Baseline();
+      feed(baseline, face(0.6, 10), 0, 10100);
+
+      expect(baseline.toSignals(face(0.6, 28), 10166).pitchDelta).toBeCloseTo(18);
+    });
+
+    it('eyes truly closed for a minute are never taken as the resting level', () => {
+      const baseline = new Baseline();
+      feed(baseline, face(0.9), 0, 60000);
+
+      expect(baseline.toSignals(face(0.9), 60000).eyeClosure).toBeCloseTo(0.9);
+    });
+
+    it('someone who arrives asleep and then opens their eyes gets a true baseline', () => {
+      const baseline = new Baseline();
+      feed(baseline, face(0.9), 0, 12000);
+      feed(baseline, face(0.2), 12000, 13000);
+
+      expect(baseline.toSignals(face(0.2), 13000).eyeClosure).toBeCloseTo(0);
+    });
+
+    it('someone who arrives asleep and wakes to narrow eyes reaches the fallback', () => {
+      const baseline = new Baseline();
+      feed(baseline, face(0.9), 0, 30000);
+      feed(baseline, face(0.6), 30000, 40000);
+
+      expect(baseline.toSignals(face(0.6), 40000).eyeClosure).toBeCloseTo(0);
+    });
+  });
+
   it("pitchDelta is measured from the person's normal pitch", () => {
     const baseline = new Baseline();
 

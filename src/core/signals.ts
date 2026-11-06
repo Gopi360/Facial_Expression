@@ -22,11 +22,19 @@ function median(values: readonly number[]): number {
   return sorted.length % 2 === 1 ? upper : ((sorted[mid - 1] ?? 0) + upper) / 2;
 }
 
+function percentile(values: readonly number[], fraction: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(fraction * (sorted.length - 1))] ?? 0;
+}
+
+interface Sample { ms: number; closure: number; pitch: number }
+
 /** Learns one person's normal eye openness and head pitch, then judges changes against them. */
 export class Baseline {
   private startMs: number | null = null;
   private readonly closures: number[] = [];
   private readonly pitches: number[] = [];
+  private recent: Sample[] = []; // every sample in the last baselineMaxWaitMs
   private frozen: { closure: number; pitch: number } | null = null;
 
   toSignals(face: RawFace, nowMs: number): Signals {
@@ -55,6 +63,25 @@ export class Baseline {
     const enoughTime = nowMs - this.startMs >= CONFIG.baselineMs;
     if (enoughTime && this.closures.length >= CONFIG.baselineMinSamples) {
       this.frozen = { closure: median(this.closures), pitch: median(this.pitches) };
+      return;
+    }
+    this.tryFallback(rawClosure, pitchDeg, nowMs);
+  }
+
+  /**
+   * Some eyes never read as open, so after a long wait their low percentile is
+   * taken as their normal. Eyes truly shut stay above the limit and keep waiting,
+   * or a sleeper would become the new normal and read as awake forever.
+   */
+  private tryFallback(rawClosure: number, pitchDeg: number, nowMs: number): void {
+    this.recent.push({ ms: nowMs, closure: rawClosure, pitch: pitchDeg });
+    this.recent = this.recent.filter((s) => nowMs - s.ms <= CONFIG.baselineMaxWaitMs);
+    if (this.startMs === null || nowMs - this.startMs < CONFIG.baselineMaxWaitMs) return;
+
+    const closures = this.recent.map((s) => s.closure);
+    const closure = percentile(closures, CONFIG.baselineFallbackPercentile);
+    if (closure <= CONFIG.baselineFallbackMaxClosure) {
+      this.frozen = { closure, pitch: median(this.recent.map((s) => s.pitch)) };
     }
   }
 }
