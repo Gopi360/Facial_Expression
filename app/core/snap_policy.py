@@ -5,7 +5,11 @@ from .config import CONFIG
 
 
 class SnapPolicy:
-    """True once per red event: a letter red continuously for min_red_ms. Re-arms when not red."""
+    """True once per red event: a letter red continuously for min_red_ms. Re-arms when not red.
+
+    The caller calls update for every present person on every frame, including hidden people
+    in their grace period, and calls drop when a letter leaves.
+    """
 
     def __init__(self) -> None:
         self._red_since: dict[str, float] = {}
