@@ -236,6 +236,47 @@ describe('drowsy', () => {
     expect(run(classifier, droopy, 2900, 3000)).toEqual({ label: 'drowsy', confidence: 50 });
   });
 
+  it.each([2000, 2500, 3300, 5000])(
+    'droopy eyes with 200ms blinks every %ims reach drowsy and stay drowsy for 30s',
+    (periodMs) => {
+      const classifier = new PersonClassifier();
+      const droopy = { ...OPEN, eyeClosure: 0.45 };
+      const blinking = (t: number): Signals => (t % periodMs < 200 ? CLOSED : droopy);
+
+      expect(labelsShown(classifier, blinking, 0, 3168).has('drowsy')).toBe(false);
+      // The sign is false on closed frames, so a blink at the end of the hold delays it.
+      labelsShown(classifier, blinking, 3234, 3564);
+      expect(labelsShown(classifier, blinking, 3630, 33630)).toEqual(new Set(['drowsy']));
+    },
+  );
+
+  it('a closed frame is not itself the droopy sign', () => {
+    const classifier = new PersonClassifier();
+    const droopy = { ...OPEN, eyeClosure: 0.4 };
+    run(classifier, droopy, 0, 2970);
+
+    expect(run(classifier, CLOSED, 3036, 3170).label).not.toBe('drowsy');
+    expect(run(classifier, droopy, 3236, 3302).label).toBe('drowsy');
+  });
+
+  it('a closure of slow blink length restarts the droopy hold', () => {
+    const classifier = new PersonClassifier();
+    const droopy = { ...OPEN, eyeClosure: 0.4 };
+    run(classifier, droopy, 0, 2000);
+    run(classifier, CLOSED, 2066, 2600);
+
+    expect(run(classifier, droopy, 2666, 5600).label).not.toBe('drowsy');
+    expect(run(classifier, droopy, 5600, 5666).label).toBe('drowsy');
+  });
+
+  it('droopy eyes that close fully stay drowsy until sleeping at the delay', () => {
+    const classifier = new PersonClassifier();
+    expect(run(classifier, { ...OPEN, eyeClosure: 0.4 }, 0, 3500, 7).label).toBe('drowsy');
+
+    expect(labelsShown(classifier, () => CLOSED, 3566, 10500, 7)).toEqual(new Set(['drowsy']));
+    expect(run(classifier, CLOSED, 10500, 10566, 7).label).toBe('sleeping');
+  });
+
   it('head droop with half-closed eyes for 1.5 seconds gives drowsy', () => {
     const classifier = new PersonClassifier();
     const nodding = { ...OPEN, eyeClosure: 0.5, pitchDelta: 20 };

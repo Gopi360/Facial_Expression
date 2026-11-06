@@ -145,20 +145,29 @@ export class PersonClassifier {
     st.slowBlinkEndsMs = st.slowBlinkEndsMs.filter(
       (endMs) => nowMs - endMs <= CONFIG.slowBlinkWindowMs,
     );
+    const closed = isEyesClosed(s);
     const notLookingDown = s.lookDown < CONFIG.lookDownAt;
-    // Fully closed eyes belong to the closed count, so the delay setting governs them.
-    const droopy = notLookingDown && s.eyeClosure >= CONFIG.droopyEyesAt && !isEyesClosed(s);
+    const droopy = notLookingDown && s.eyeClosure >= CONFIG.droopyEyesAt;
     const headDroop =
       notLookingDown &&
       s.pitchDelta >= CONFIG.headDroopDeg &&
       s.eyeClosure >= CONFIG.headDroopEyesAt;
-    st.droopySinceMs = droopy ? (st.droopySinceMs ?? nowMs) : null;
+    // A blink passes through the droopy hold, but a longer closure ends it.
+    const longClosure =
+      st.closedRunSinceMs !== null && nowMs - st.closedRunSinceMs >= CONFIG.slowBlinkMs;
+    if (!droopy || longClosure) st.droopySinceMs = null;
+    else if (!closed) st.droopySinceMs ??= nowMs;
     st.headDroopSinceMs = headDroop ? (st.headDroopSinceMs ?? nowMs) : null;
 
+    // Fully closed eyes are not the droopy sign, so the delay setting governs them.
+    // Only someone already drowsy stays drowsy through them, until sleeping takes over.
+    const droopyHeld =
+      !closed && st.droopySinceMs !== null && nowMs - st.droopySinceMs >= CONFIG.droopyHoldMs;
     const signPresent =
       st.slowBlinkEndsMs.length >= CONFIG.slowBlinksForDrowsy ||
-      (st.droopySinceMs !== null && nowMs - st.droopySinceMs >= CONFIG.droopyHoldMs) ||
-      (st.headDroopSinceMs !== null && nowMs - st.headDroopSinceMs >= CONFIG.headDroopHoldMs);
+      droopyHeld ||
+      (st.headDroopSinceMs !== null && nowMs - st.headDroopSinceMs >= CONFIG.headDroopHoldMs) ||
+      (closed && st.shown?.label === 'drowsy');
     if (signPresent) st.drowsySignMs = nowMs;
   }
 
