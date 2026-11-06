@@ -128,6 +128,15 @@ describe('sleeping', () => {
     expect(run(classifier, OPEN, 7000, 7066).label).toBe('neutral');
   });
 
+  it('waking keeps the last closed confidence until the label changes', () => {
+    const classifier = new PersonClassifier();
+    run(classifier, { ...OPEN, eyeClosure: 0.9 }, 0, 3500);
+
+    for (let t = 3566; t < 4000; t += STEP_MS) {
+      expect(classifier.update(OPEN, t, 3)).toEqual({ label: 'sleeping', confidence: 90 });
+    }
+  });
+
   it('a one-frame smile dip with squeezed eyes stays out of sleeping before 5 seconds', () => {
     const squeezed = { ...LAUGH, eyeClosure: 1 };
     const dip = { ...squeezed, smile: 0.45 };
@@ -316,6 +325,66 @@ describe('drowsy', () => {
     expect(labels.has('drowsy')).toBe(false);
   });
 
+  it('two slow blinks are one event, so drowsy ends 2 seconds after the second', () => {
+    const classifier = new PersonClassifier();
+    slowBlink(classifier, 0);
+    run(classifier, OPEN, 900, 3000);
+    expect(slowBlink(classifier, 3000).label).toBe('drowsy');
+
+    expect(run(classifier, OPEN, 3900, 5500).label).toBe('drowsy');
+    expect(run(classifier, OPEN, 5500, 6500).label).toBe('neutral');
+  });
+
+  it('a third slow blink after the event needs a partner to fire again', () => {
+    const classifier = new PersonClassifier();
+    slowBlink(classifier, 0);
+    run(classifier, OPEN, 900, 2000);
+    slowBlink(classifier, 2000);
+    run(classifier, OPEN, 2900, 6000);
+
+    expect(slowBlink(classifier, 6000).label).not.toBe('drowsy');
+  });
+
+  it('droopy eyes reach and keep drowsy despite a one-frame brow spike every 2 seconds', () => {
+    const droopy = { ...OPEN, eyeClosure: 0.4 };
+    const spiked = (t: number): Signals =>
+      t % 1980 === 0 && t > 0 ? { ...droopy, browDown: 0.7 } : droopy;
+    const classifier = new PersonClassifier();
+    labelsShown(classifier, spiked, 0, 3300);
+
+    expect(labelsShown(classifier, spiked, 3366, 60000)).toEqual(new Set(['drowsy']));
+  });
+
+  it('one strong frame while drowsy does not stop it', () => {
+    const droopy = { ...OPEN, eyeClosure: 0.4 };
+    const classifier = new PersonClassifier();
+    run(classifier, droopy, 0, 3300);
+    classifier.update({ ...droopy, browDown: 0.7 }, 3366, 3);
+
+    expect(labelsShown(classifier, () => droopy, 3432, 8000)).toEqual(new Set(['drowsy']));
+  });
+
+  it('a strong expression held for 500ms ends drowsy', () => {
+    const classifier = new PersonClassifier();
+    run(classifier, { ...OPEN, eyeClosure: 0.4 }, 0, 3300);
+
+    expect(run(classifier, { ...LAUGH, eyeClosure: 0.4 }, 3366, 4500).label).toBe('laughing');
+  });
+
+  it('a laugh starting just before the droopy hold ends never shows drowsy', () => {
+    const classifier = new PersonClassifier();
+    run(classifier, { ...OPEN, eyeClosure: 0.4 }, 0, 2800);
+    const laughing = { ...LAUGH, eyeClosure: 0.4 };
+
+    expect(labelsShown(classifier, () => laughing, 2866, 6000).has('drowsy')).toBe(false);
+  });
+
+  it('known limit: resting brows at the angry level with droopy eyes read angry', () => {
+    const frowningDroopy = { ...OPEN, eyeClosure: 0.4, browDown: 0.45 };
+
+    expect(run(new PersonClassifier(), frowningDroopy, 0, 60000).label).toBe('angry');
+  });
+
   it('a laugh with repeated eye squeezes leaves no drowsy behind', () => {
     const squeezing = (t: number): Signals =>
       t < 6000 ? { ...LAUGH, eyeClosure: t % 1000 < 600 ? 1 : 0 } : OPEN;
@@ -351,6 +420,43 @@ describe('display', () => {
     const flicker = (t: number): Signals => (t >= 1000 && t < 1400 ? smile : OPEN);
 
     expect(labelsShown(new PersonClassifier(), flicker, 0, 3000)).toEqual(new Set(['neutral']));
+  });
+
+  describe('two labels alternating faster than the hold', () => {
+    const alternating =
+      (a: Signals, b: Signals) =>
+      (t: number): Signals =>
+        t % 300 < 150 ? a : b;
+    const jawCrossing = alternating({ ...LAUGH, jawOpen: 0.3 }, { ...LAUGH, jawOpen: 0.2 });
+    const rows: [string, (t: number) => Signals, Label[]][] = [
+      ['jaw crossing the laugh line', jawCrossing, ['laughing', 'smiling']],
+      [
+        'smile around the smile line',
+        alternating({ ...OPEN, smile: 0.37 }, { ...OPEN, smile: 0.33 }),
+        ['smiling', 'neutral'],
+      ],
+      [
+        'brows around the angry line',
+        alternating({ ...OPEN, browDown: 0.42 }, { ...OPEN, browDown: 0.38 }),
+        ['angry', 'neutral'],
+      ],
+    ];
+
+    it.each(rows)('%s leaves sleeping soon after waking', (_name, signalsAt, allowed) => {
+      const classifier = new PersonClassifier();
+      run(classifier, CLOSED, 0, 3500);
+      labelsShown(classifier, signalsAt, 3566, 4600);
+
+      const after = labelsShown(classifier, signalsAt, 4666, 20000);
+      for (const label of after) expect(allowed).toContain(label);
+    });
+
+    it('a jaw-crossing laugh leaves neutral within a second', () => {
+      const classifier = new PersonClassifier();
+      labelsShown(classifier, jawCrossing, 0, 1000);
+
+      expect(labelsShown(classifier, jawCrossing, 1066, 10000).has('neutral')).toBe(false);
+    });
   });
 
   it('a held label keeps its last confidence until the new label shows', () => {

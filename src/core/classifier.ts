@@ -1,6 +1,6 @@
 import { CONFIG } from './config';
 import { clamp01 } from './signals';
-import type { Label, Reading, Signals } from './types';
+import type { Reading, Signals } from './types';
 
 const MS_PER_SEC = 1000;
 
@@ -46,17 +46,18 @@ interface State {
   lastUpdateMs: number | null;
   closedSinceMs: number | null; // start of the closed count
   lastClosedMs: number; // last frame with eyes closed, while the count runs
+  lastClosedStrength: number; // eyeClosure on that frame
   closedRunSinceMs: number | null; // start of the current unbroken closed run
   longestClosedRunMs: number; // longest unbroken run within the closed count
   openSinceMs: number | null; // first open frame while the count still runs
   slowBlinkEndsMs: number[];
   lastStrongMs: number | null;
+  strongRunSinceMs: number | null; // start of the current unbroken strong run
   droopySinceMs: number | null;
   headDroopSinceMs: number | null;
   drowsySignMs: number | null; // last time any drowsy sign was true
   shown: Reading | null;
-  pendingLabel: Label | null;
-  pendingSinceMs: number;
+  differsSinceMs: number | null; // when the candidate first stopped matching the shown label
 }
 
 function freshState(): State {
@@ -64,17 +65,18 @@ function freshState(): State {
     lastUpdateMs: null,
     closedSinceMs: null,
     lastClosedMs: 0,
+    lastClosedStrength: 0,
     closedRunSinceMs: null,
     longestClosedRunMs: 0,
     openSinceMs: null,
     slowBlinkEndsMs: [],
     lastStrongMs: null,
+    strongRunSinceMs: null,
     droopySinceMs: null,
     headDroopSinceMs: null,
     drowsySignMs: null,
     shown: null,
-    pendingLabel: null,
-    pendingSinceMs: 0,
+    differsSinceMs: null,
   };
 }
 
@@ -91,8 +93,9 @@ export class PersonClassifier {
 
     const delayMs = delaySec * MS_PER_SEC;
     const strong = this.heldStrong(s, nowMs);
+    const sustained = this.sustainedStrong(s, nowMs, strong);
     this.trackClosure(s, nowMs, delayMs);
-    this.trackDrowsySigns(s, nowMs, strong);
+    this.trackDrowsySigns(s, nowMs, sustained);
     return this.display(s, this.candidate(s, nowMs, delayMs, strong), nowMs);
   }
 
@@ -103,12 +106,26 @@ export class PersonClassifier {
     return st.lastStrongMs !== null && nowMs - st.lastStrongMs < CONFIG.labelHoldMs;
   }
 
+  /**
+   * True once a strong expression has run unbroken for labelHoldMs, and until it
+   * is no longer held. A lone noisy frame never gets there.
+   */
+  private sustainedStrong(s: Signals, nowMs: number, held: boolean): boolean {
+    const st = this.state;
+    const reached = (): boolean =>
+      st.strongRunSinceMs !== null && nowMs - st.strongRunSinceMs >= CONFIG.labelHoldMs;
+    if (isStrongExpression(s)) st.strongRunSinceMs ??= nowMs;
+    else if (!held || !reached()) st.strongRunSinceMs = null;
+    return reached();
+  }
+
   private trackClosure(s: Signals, nowMs: number, delayMs: number): void {
     const st = this.state;
     if (isEyesClosed(s)) {
       st.closedSinceMs ??= nowMs;
       st.closedRunSinceMs ??= nowMs;
       st.lastClosedMs = nowMs;
+      st.lastClosedStrength = s.eyeClosure;
       st.longestClosedRunMs = Math.max(st.longestClosedRunMs, nowMs - st.closedRunSinceMs);
       st.openSinceMs = null;
       return;
@@ -130,9 +147,9 @@ export class PersonClassifier {
     st.longestClosedRunMs = 0;
   }
 
-  private trackDrowsySigns(s: Signals, nowMs: number, strong: boolean): void {
+  private trackDrowsySigns(s: Signals, nowMs: number, sustainedStrong: boolean): void {
     const st = this.state;
-    if (strong) {
+    if (sustainedStrong) {
       // Clear everything, not just the label, so that eyes squeezed shut in a
       // laugh cannot set off drowsy the moment the laugh ends.
       st.slowBlinkEndsMs = [];
@@ -163,19 +180,25 @@ export class PersonClassifier {
     // Only someone already drowsy stays drowsy through them, until sleeping takes over.
     const droopyHeld =
       !closed && st.droopySinceMs !== null && nowMs - st.droopySinceMs >= CONFIG.droopyHoldMs;
+    const slowBlinks = st.slowBlinkEndsMs.length >= CONFIG.slowBlinksForDrowsy;
     const signPresent =
-      st.slowBlinkEndsMs.length >= CONFIG.slowBlinksForDrowsy ||
+      slowBlinks ||
       droopyHeld ||
       (st.headDroopSinceMs !== null && nowMs - st.headDroopSinceMs >= CONFIG.headDroopHoldMs) ||
       (closed && st.shown?.label === 'drowsy');
-    if (signPresent) st.drowsySignMs = nowMs;
+    // A strong frame neither ends drowsy nor starts it, so a laugh that begins
+    // just as a hold runs out does not sound the alarm before it is sustained.
+    if (!signPresent || isStrongExpression(s)) return;
+    st.drowsySignMs = nowMs;
+    if (slowBlinks) st.slowBlinkEndsMs = []; // one event, so drowsy ends after drowsyClearMs
   }
 
   private candidate(s: Signals, nowMs: number, delayMs: number, strong: boolean): Reading {
-    const { closedSinceMs, drowsySignMs } = this.state;
+    const { closedSinceMs, drowsySignMs, lastClosedStrength } = this.state;
     const neededMs = strong ? Math.max(delayMs, CONFIG.expressionLimitMs) : delayMs;
     if (closedSinceMs !== null && nowMs - closedSinceMs >= neededMs) {
-      return { label: 'sleeping', confidence: percent(s.eyeClosure) };
+      // Through the open grace this stays the strength of the last closed frame.
+      return { label: 'sleeping', confidence: percent(lastClosedStrength) };
     }
     if (drowsySignMs !== null && nowMs - drowsySignMs < CONFIG.drowsyClearMs) {
       const strength = Math.max(s.eyeClosure, CONFIG.drowsyMinConfidence);
@@ -190,17 +213,16 @@ export class PersonClassifier {
     st.shown ??= neutralReading(s);
 
     if (candidate.label === st.shown.label) {
-      st.pendingLabel = null;
+      st.differsSinceMs = null;
       st.shown = candidate;
       return candidate;
     }
-    if (candidate.label !== st.pendingLabel) {
-      st.pendingLabel = candidate.label;
-      st.pendingSinceMs = nowMs;
-    }
+    // Timed against the shown label, not one candidate, so that two other labels
+    // alternating faster than the hold cannot pin an old label, or the alarm, on.
+    st.differsSinceMs ??= nowMs;
     const immediate = candidate.label === 'sleeping' || candidate.label === 'drowsy';
-    if (immediate || nowMs - st.pendingSinceMs >= CONFIG.labelHoldMs) {
-      st.pendingLabel = null;
+    if (immediate || nowMs - st.differsSinceMs >= CONFIG.labelHoldMs) {
+      st.differsSinceMs = null;
       st.shown = candidate;
     }
     return st.shown;
