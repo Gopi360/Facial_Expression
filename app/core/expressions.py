@@ -19,13 +19,26 @@ EMOTIONS = (
 _SHOWN_AS: dict[str, Label] = {"Anger": "angry", "Sadness": "crying"}
 
 
+def _top_emotion(scores: dict[str, float]) -> str:
+    return max(EMOTIONS, key=lambda name: scores.get(name, 0.0))
+
+
+def is_model_laugh(scores: dict[str, float] | None, s: Signals) -> bool:
+    """Happiness on top with the jaw open. Decides the label and protects the sleep path."""
+    if not scores:
+        return False
+    return _top_emotion(scores) == "Happiness" and s.jaw_open >= CONFIG.laugh_jaw_at
+
+
 def expression_reading(scores: dict[str, float] | None, s: Signals) -> Reading:
     """The label for the highest score. With no scores yet, neutral at 100."""
     if not scores:
         return Reading("neutral", 100)
 
-    top = max(EMOTIONS, key=lambda name: scores.get(name, 0.0))
+    top = _top_emotion(scores)
     confidence = percent(scores.get(top, 0.0))
+    if is_model_laugh(scores, s):
+        return Reading("laughing", confidence)
     if top == "Happiness":
-        return Reading("laughing" if s.jaw_open >= CONFIG.laugh_jaw_at else "smiling", confidence)
+        return Reading("smiling", confidence)
     return Reading(_SHOWN_AS.get(top, "neutral"), confidence)

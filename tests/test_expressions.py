@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from app.core.config import CONFIG
-from app.core.expressions import EMOTIONS, expression_reading
+from app.core.expressions import EMOTIONS, expression_reading, is_model_laugh
 from app.core.types import Reading, Signals
 
 OPEN = Signals(
@@ -70,3 +70,16 @@ def test_the_highest_of_the_eight_wins():
 
 def test_confidence_rounds_half_up_like_the_typescript_version():
     assert expression_reading(scores(Neutral=0.125), OPEN).confidence == 13
+
+
+@pytest.mark.parametrize(
+    ("emotion", "signals", "expected"),
+    [
+        (scores(Happiness=0.8), JAW_OPEN, True),
+        (scores(Happiness=0.8), OPEN, False),
+        (scores(Happiness=0.4, Neutral=0.6), JAW_OPEN, False),
+        (None, JAW_OPEN, False),
+    ],
+)
+def test_is_model_laugh_needs_happiness_on_top_and_an_open_jaw(emotion, signals, expected):
+    assert is_model_laugh(emotion, signals) is expected

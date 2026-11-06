@@ -26,6 +26,7 @@ OPEN = Signals(
 )
 CLOSED = replace(OPEN, eye_closure=1)
 LAUGH = replace(OPEN, smile=0.8, jaw_open=0.5)
+MODEL_LAUGH = replace(OPEN, smile=0.45, jaw_open=0.5)  # under strong_smile_at
 ANGRY = replace(OPEN, brow_down=0.7)
 CRYING = replace(OPEN, brow_inner_up=0.6, frown=0.5)
 DROOPY = replace(OPEN, eye_closure=0.4)
@@ -401,11 +402,81 @@ def test_a_laugh_starting_just_before_the_droopy_hold_ends_never_shows_drowsy():
     assert "drowsy" not in labels_shown(classifier, lambda t: laughing, 2866, 6000)
 
 
-def test_known_limit_resting_brows_at_the_angry_level_with_droopy_eyes_read_angry():
+@pytest.mark.parametrize(("emotion", "label"), [(ANGER, "angry"), (CALM, "neutral")])
+def test_known_limit_resting_brows_at_the_angry_level_with_droopy_eyes(emotion, label):
+    """The blendshape rule protects either way, so with CALM a missed drowsy goes unseen."""
     frowning_droopy = replace(OPEN, eye_closure=0.4, brow_down=0.45)
+    classifier = PersonClassifier()
+    labels = labels_shown(
+        classifier, lambda t: frowning_droopy, 0, 60000, emotion_at=lambda t: emotion
+    )
 
-    reading = run(PersonClassifier(), frowning_droopy, 0, 60000, emotion=ANGER)
-    assert reading.label == "angry"
+    assert "drowsy" not in labels
+    assert run(classifier, frowning_droopy, 60066, 60132, emotion=emotion).label == label
+
+
+# A laugh the model sees while the blendshape smile stays under strong_smile_at
+
+
+def test_model_laugh_with_squeezed_eyes_stays_out_of_sleeping_until_the_5_second_limit():
+    squeezed = replace(MODEL_LAUGH, eye_closure=1)
+    classifier = PersonClassifier()
+    labels = labels_shown(classifier, lambda t: squeezed, 0, 4950, emotion_at=lambda t: HAPPY)
+
+    assert "sleeping" not in labels
+    assert "drowsy" not in labels
+    assert run(classifier, squeezed, 4950, 5000, emotion=HAPPY).label == "sleeping"
+
+
+def test_model_laugh_with_a_squint_never_gives_drowsy():
+    squinting = replace(MODEL_LAUGH, eye_closure=0.4)
+    labels = labels_shown(
+        PersonClassifier(), lambda t: squinting, 0, 10000, emotion_at=lambda t: HAPPY
+    )
+
+    assert labels == {"neutral", "laughing"}
+
+
+def test_model_laugh_with_repeated_600ms_squeezes_never_gives_drowsy_or_sleeping():
+    def squeezing(t: int) -> Signals:
+        return replace(MODEL_LAUGH, eye_closure=1 if t % 1000 < 600 else 0)
+
+    labels = labels_shown(
+        PersonClassifier(), squeezing, 0, 30000, emotion_at=lambda t: HAPPY
+    )
+
+    assert labels == {"neutral", "laughing"}
+
+
+def test_model_laugh_with_repeated_squeezes_leaves_no_drowsy_behind():
+    def squeezing(t: int) -> Signals:
+        return replace(MODEL_LAUGH, eye_closure=1 if t % 1000 < 600 else 0) if t < 6000 else OPEN
+
+    labels = labels_shown(
+        PersonClassifier(),
+        squeezing,
+        0,
+        9000,
+        emotion_at=lambda t: HAPPY if t < 6000 else CALM,
+    )
+
+    assert "drowsy" not in labels
+    assert "sleeping" not in labels
+
+
+@pytest.mark.parametrize(
+    ("signals", "emotion"),
+    [
+        pytest.param(CLOSED, HAPPY, id="happiness_with_closed_mouth"),
+        pytest.param(
+            replace(CLOSED, jaw_open=0.3),
+            scores(Neutral=0.6, Happiness=0.4),
+            id="open_jaw_but_happiness_is_not_top",
+        ),
+    ],
+)
+def test_only_a_model_laugh_holds_sleeping_back(signals, emotion):
+    assert run(PersonClassifier(), signals, 0, 3000, emotion=emotion).label == "sleeping"
 
 
 def test_a_laugh_whose_smile_dips_one_frame_in_five_still_protects_against_drowsy():

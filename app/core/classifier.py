@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from app.core.config import CONFIG
-from app.core.expressions import expression_reading
+from app.core.expressions import expression_reading, is_model_laugh
 from app.core.signals import percent
 from app.core.types import DrowsySign, Reading, Signals
 
@@ -28,9 +28,10 @@ def _is_crying(s: Signals) -> bool:
     return s.brow_inner_up >= CONFIG.cry_brow_at and s.frown >= CONFIG.cry_frown_at
 
 
-def _is_strong_expression(s: Signals) -> bool:
-    """Blendshape rules that protect the sleep path. The model decides what is displayed."""
-    return s.smile >= CONFIG.strong_smile_at or _is_angry(s) or _is_crying(s)
+def _is_strong_expression(s: Signals, emotion: dict[str, float] | None) -> bool:
+    """What protects the sleep path: the blendshape rules, or a laugh the model is showing."""
+    blendshapes = s.smile >= CONFIG.strong_smile_at or _is_angry(s) or _is_crying(s)
+    return blendshapes or is_model_laugh(emotion, s)
 
 
 def _is_yawn(s: Signals) -> bool:
@@ -82,8 +83,9 @@ class PersonClassifier:
         self._state.last_update_ms = now_ms
 
         delay_ms = delay_sec * MS_PER_SEC
-        strong = self._held_strong(s, now_ms)
-        sustained = self._sustained_strong(s, now_ms, strong)
+        is_strong = _is_strong_expression(s, emotion)
+        strong = self._held_strong(is_strong, now_ms)
+        sustained = self._sustained_strong(is_strong, now_ms, strong)
         self._track_closure(s, now_ms, delay_ms)
         self._track_drowsy_signs(s, now_ms, sustained)
         self._track_yawn(s, now_ms)
@@ -94,14 +96,14 @@ class PersonClassifier:
         }
         return self._display(s, self._candidate(s, now_ms, delay_ms, strong, emotion), now_ms)
 
-    def _held_strong(self, s: Signals, now_ms: float) -> bool:
+    def _held_strong(self, is_strong: bool, now_ms: float) -> bool:
         """A strong expression counts as present until it has been absent for label_hold_ms."""
         st = self._state
-        if _is_strong_expression(s):
+        if is_strong:
             st.last_strong_ms = now_ms
         return st.last_strong_ms is not None and now_ms - st.last_strong_ms < CONFIG.label_hold_ms
 
-    def _sustained_strong(self, s: Signals, now_ms: float, held: bool) -> bool:
+    def _sustained_strong(self, is_strong: bool, now_ms: float, held: bool) -> bool:
         """True once a strong expression has run for label_hold_ms, and until it is no longer
         held. A lone noisy frame never gets there, and a dip under strong_dip_grace_ms
         does not break the run, so a real laugh with a noisy smile still does.
@@ -117,7 +119,7 @@ class PersonClassifier:
         dip_over = (
             st.last_strong_ms is None or now_ms - st.last_strong_ms > CONFIG.strong_dip_grace_ms
         )
-        if _is_strong_expression(s):
+        if is_strong:
             if st.strong_run_since_ms is None:
                 st.strong_run_since_ms = now_ms
         elif not held or (dip_over and not reached()):
