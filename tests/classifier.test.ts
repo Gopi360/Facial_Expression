@@ -37,10 +37,11 @@ function labelsShown(
   signalsAt: (t: number) => Signals,
   fromMs: number,
   toMs: number,
+  delaySec = 3,
 ): Set<Label> {
   const labels = new Set<Label>();
   for (let t = fromMs; t <= toMs; t += STEP_MS) {
-    labels.add(classifier.update(signalsAt(t), t, 3).label);
+    labels.add(classifier.update(signalsAt(t), t, delaySec).label);
   }
   return labels;
 }
@@ -109,6 +110,43 @@ describe('sleeping', () => {
     expect(run(classifier, squeezed, 6000, 7000, 7).label).toBe('sleeping');
   });
 
+  it('closed eyes at delay 7 show neither sleeping nor drowsy until 7 seconds', () => {
+    const classifier = new PersonClassifier();
+    const labels = labelsShown(classifier, () => CLOSED, 0, 6900, 7);
+
+    expect(labels.has('sleeping')).toBe(false);
+    expect(labels.has('drowsy')).toBe(false);
+    expect(run(classifier, CLOSED, 6900, 7000, 7).label).toBe('sleeping');
+  });
+
+  it('waking from sleeping does not pass through drowsy', () => {
+    const classifier = new PersonClassifier();
+    run(classifier, CLOSED, 0, 3500);
+    const labels = labelsShown(classifier, () => OPEN, 3566, 7000);
+
+    expect(labels.has('drowsy')).toBe(false);
+    expect(run(classifier, OPEN, 7000, 7066).label).toBe('neutral');
+  });
+
+  it('a one-frame smile dip with squeezed eyes stays out of sleeping before 5 seconds', () => {
+    const squeezed = { ...LAUGH, eyeClosure: 1 };
+    const dip = { ...squeezed, smile: 0.45 };
+    const classifier = new PersonClassifier();
+    const labels = labelsShown(classifier, (t) => (t === 3300 ? dip : squeezed), 0, 4950);
+
+    expect(labels.has('sleeping')).toBe(false);
+    expect(labels.has('drowsy')).toBe(false);
+    expect(run(classifier, squeezed, 4950, 5000).label).toBe('sleeping');
+  });
+
+  it('a smile gone for 500ms no longer holds sleeping back', () => {
+    const classifier = new PersonClassifier();
+    run(classifier, { ...LAUGH, eyeClosure: 1 }, 0, 3300);
+
+    expect(run(classifier, CLOSED, 3366, 3700).label).not.toBe('sleeping');
+    expect(run(classifier, CLOSED, 3700, 3800).label).toBe('sleeping');
+  });
+
   it('a 5 second frame gap does not count as closed time', () => {
     const classifier = new PersonClassifier();
     run(classifier, CLOSED, 0, 2000);
@@ -166,6 +204,30 @@ describe('drowsy', () => {
     expect(slowBlink(classifier, 6500).label).not.toBe('drowsy');
   });
 
+  it('double blinks every 5 seconds for one minute never give drowsy', () => {
+    const doubleBlink = (t: number): Signals => {
+      const phase = t % 5000;
+      return phase < 180 || (phase >= 300 && phase < 480) ? CLOSED : OPEN;
+    };
+    const labels = labelsShown(new PersonClassifier(), doubleBlink, 0, 60000);
+
+    expect(labels.has('drowsy')).toBe(false);
+    expect(labels.has('sleeping')).toBe(false);
+  });
+
+  it('a glitch inside a slow blink keeps its longest unbroken run', () => {
+    const classifier = new PersonClassifier();
+    const slowWithGlitch = (fromMs: number): Reading => {
+      run(classifier, CLOSED, fromMs, fromMs + 500);
+      run(classifier, OPEN, fromMs + 566, fromMs + 632);
+      run(classifier, CLOSED, fromMs + 698, fromMs + 800);
+      return run(classifier, OPEN, fromMs + 866, fromMs + 1200);
+    };
+
+    expect(slowWithGlitch(0).label).not.toBe('drowsy');
+    expect(slowWithGlitch(1266).label).toBe('drowsy');
+  });
+
   it('drooping eyes for 3 seconds give drowsy', () => {
     const classifier = new PersonClassifier();
     const droopy = { ...OPEN, eyeClosure: 0.4 };
@@ -180,6 +242,14 @@ describe('drowsy', () => {
 
     expect(run(classifier, nodding, 0, 1400).label).not.toBe('drowsy');
     expect(run(classifier, nodding, 1400, 1500)).toEqual({ label: 'drowsy', confidence: 50 });
+  });
+
+  it('head droop with closed eyes gives drowsy at 1.5 seconds, whatever the delay', () => {
+    const classifier = new PersonClassifier();
+    const nodded = { ...CLOSED, pitchDelta: 20 };
+
+    expect(run(classifier, nodded, 0, 1400, 7).label).not.toBe('drowsy');
+    expect(run(classifier, nodded, 1400, 1500, 7)).toEqual({ label: 'drowsy', confidence: 100 });
   });
 
   it('looking down with eyes open never triggers', () => {

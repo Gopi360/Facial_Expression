@@ -46,8 +46,11 @@ interface State {
   lastUpdateMs: number | null;
   closedSinceMs: number | null; // start of the closed count
   lastClosedMs: number; // last frame with eyes closed, while the count runs
+  closedRunSinceMs: number | null; // start of the current unbroken closed run
+  longestClosedRunMs: number; // longest unbroken run within the closed count
   openSinceMs: number | null; // first open frame while the count still runs
   slowBlinkEndsMs: number[];
+  lastStrongMs: number | null;
   droopySinceMs: number | null;
   headDroopSinceMs: number | null;
   drowsySignMs: number | null; // last time any drowsy sign was true
@@ -61,8 +64,11 @@ function freshState(): State {
     lastUpdateMs: null,
     closedSinceMs: null,
     lastClosedMs: 0,
+    closedRunSinceMs: null,
+    longestClosedRunMs: 0,
     openSinceMs: null,
     slowBlinkEndsMs: [],
+    lastStrongMs: null,
     droopySinceMs: null,
     headDroopSinceMs: null,
     drowsySignMs: null,
@@ -84,30 +90,44 @@ export class PersonClassifier {
     this.state.lastUpdateMs = nowMs;
 
     const delayMs = delaySec * MS_PER_SEC;
-    const strong = isStrongExpression(s);
+    const strong = this.heldStrong(s, nowMs);
     this.trackClosure(s, nowMs, delayMs);
     this.trackDrowsySigns(s, nowMs, strong);
     return this.display(s, this.candidate(s, nowMs, delayMs, strong), nowMs);
+  }
+
+  /** A strong expression counts as present until it has been absent for labelHoldMs. */
+  private heldStrong(s: Signals, nowMs: number): boolean {
+    const st = this.state;
+    if (isStrongExpression(s)) st.lastStrongMs = nowMs;
+    return st.lastStrongMs !== null && nowMs - st.lastStrongMs < CONFIG.labelHoldMs;
   }
 
   private trackClosure(s: Signals, nowMs: number, delayMs: number): void {
     const st = this.state;
     if (isEyesClosed(s)) {
       st.closedSinceMs ??= nowMs;
+      st.closedRunSinceMs ??= nowMs;
       st.lastClosedMs = nowMs;
+      st.longestClosedRunMs = Math.max(st.longestClosedRunMs, nowMs - st.closedRunSinceMs);
       st.openSinceMs = null;
       return;
     }
+    st.closedRunSinceMs = null;
     if (st.closedSinceMs === null) return;
 
     st.openSinceMs ??= nowMs;
     if (nowMs - st.openSinceMs < CONFIG.openGraceMs) return;
 
-    // The open grace period is not part of the closure's length.
-    const lengthMs = st.lastClosedMs - st.closedSinceMs;
-    if (lengthMs >= CONFIG.slowBlinkMs && lengthMs < delayMs) st.slowBlinkEndsMs.push(nowMs);
+    // The grace bridges the sleep count, but two quick blinks it joins are not
+    // one slow blink, so a slow blink needs one unbroken run of that length.
+    const countedMs = st.lastClosedMs - st.closedSinceMs;
+    if (st.longestClosedRunMs >= CONFIG.slowBlinkMs && countedMs < delayMs) {
+      st.slowBlinkEndsMs.push(nowMs);
+    }
     st.closedSinceMs = null;
     st.openSinceMs = null;
+    st.longestClosedRunMs = 0;
   }
 
   private trackDrowsySigns(s: Signals, nowMs: number, strong: boolean): void {
@@ -126,7 +146,8 @@ export class PersonClassifier {
       (endMs) => nowMs - endMs <= CONFIG.slowBlinkWindowMs,
     );
     const notLookingDown = s.lookDown < CONFIG.lookDownAt;
-    const droopy = notLookingDown && s.eyeClosure >= CONFIG.droopyEyesAt;
+    // Fully closed eyes belong to the closed count, so the delay setting governs them.
+    const droopy = notLookingDown && s.eyeClosure >= CONFIG.droopyEyesAt && !isEyesClosed(s);
     const headDroop =
       notLookingDown &&
       s.pitchDelta >= CONFIG.headDroopDeg &&
