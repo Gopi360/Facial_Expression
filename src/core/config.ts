@@ -23,6 +23,7 @@ export const CONFIG = {
   drowsyClearMs: 2000,
   expressionLimitMs: 5000,
   labelHoldMs: 500,
+  strongDipGraceMs: 200,
   frameGapResetMs: 2500,
   defaultDelaySec: 3,
   minDelaySec: 1,

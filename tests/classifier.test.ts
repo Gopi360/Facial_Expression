@@ -385,6 +385,17 @@ describe('drowsy', () => {
     expect(run(new PersonClassifier(), frowningDroopy, 0, 60000).label).toBe('angry');
   });
 
+  it('a laugh whose smile dips one frame in five still protects against drowsy', () => {
+    const noisyLaugh = (t: number): Signals => ({
+      ...LAUGH,
+      smile: (t / STEP_MS) % 5 === 0 ? 0.45 : 0.8,
+      eyeClosure: t % 1000 < 600 ? 1 : 0,
+    });
+    const labels = labelsShown(new PersonClassifier(), noisyLaugh, 0, 30000);
+
+    expect(labels.has('drowsy')).toBe(false);
+  });
+
   it('a laugh with repeated eye squeezes leaves no drowsy behind', () => {
     const squeezing = (t: number): Signals =>
       t < 6000 ? { ...LAUGH, eyeClosure: t % 1000 < 600 ? 1 : 0 } : OPEN;

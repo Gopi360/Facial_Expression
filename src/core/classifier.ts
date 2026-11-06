@@ -52,7 +52,7 @@ interface State {
   openSinceMs: number | null; // first open frame while the count still runs
   slowBlinkEndsMs: number[];
   lastStrongMs: number | null;
-  strongRunSinceMs: number | null; // start of the current unbroken strong run
+  strongRunSinceMs: number | null; // start of the current strong run
   droopySinceMs: number | null;
   headDroopSinceMs: number | null;
   drowsySignMs: number | null; // last time any drowsy sign was true
@@ -120,15 +120,18 @@ export class PersonClassifier {
   }
 
   /**
-   * True once a strong expression has run unbroken for labelHoldMs, and until it
-   * is no longer held. A lone noisy frame never gets there.
+   * True once a strong expression has run for labelHoldMs, and until it is no longer
+   * held. A lone noisy frame never gets there, and a dip under strongDipGraceMs
+   * does not break the run, so a real laugh with a noisy smile still does.
    */
   private sustainedStrong(s: Signals, nowMs: number, held: boolean): boolean {
     const st = this.state;
     const reached = (): boolean =>
       st.strongRunSinceMs !== null && nowMs - st.strongRunSinceMs >= CONFIG.labelHoldMs;
+    const dipOver =
+      st.lastStrongMs === null || nowMs - st.lastStrongMs > CONFIG.strongDipGraceMs;
     if (isStrongExpression(s)) st.strongRunSinceMs ??= nowMs;
-    else if (!held || !reached()) st.strongRunSinceMs = null;
+    else if (!held || (dipOver && !reached())) st.strongRunSinceMs = null;
     return reached();
   }
 
@@ -204,9 +207,9 @@ export class PersonClassifier {
       [closed && st.shown?.label === 'drowsy', 'stayedClosed'],
     ];
     const sign = signs.find(([present]) => present)?.[1];
-    // A strong frame neither ends drowsy nor starts it, so a laugh that begins
-    // just as a hold runs out does not sound the alarm before it is sustained.
-    if (!sign || isStrongExpression(s)) return;
+    // A strong run neither ends drowsy nor starts it until sustained, so a laugh that
+    // begins just as a hold runs out does not sound the alarm in its first moments.
+    if (!sign || st.strongRunSinceMs !== null) return;
     st.drowsySignMs = nowMs;
     st.drowsySign = sign;
     if (slowBlinks) st.slowBlinkEndsMs = []; // one event, so drowsy ends after drowsyClearMs
