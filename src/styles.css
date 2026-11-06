@@ -1,0 +1,212 @@
+:root {
+  --page: #f3f5f8;
+  --card: #ffffff;
+  --ink: #1d2733;
+  --muted: #5d6b7a;
+  --line: #dde3ea;
+  --accent: #2563eb;
+  --alert: #c62828;
+  --notice-bg: #fff4d6;
+  --notice-ink: #6b4e00;
+  --panel-width: 260px;
+  --gap: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 15px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--panel-width);
+  gap: var(--gap);
+  height: 100%;
+  padding: var(--gap);
+}
+
+.main,
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-height: 0;
+}
+
+/* The video and canvas share one box and one object-fit, so a box drawn on the
+   canvas lands on the same pixels of the picture at any window size. */
+.stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #11161c;
+}
+
+#video,
+#overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Only the video is mirrored. The canvas stays unflipped so letters read the
+   right way round, and drawOverlay flips the box positions instead. */
+#video {
+  transform: scaleX(-1);
+}
+
+#overlay {
+  pointer-events: none;
+}
+
+.start {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 14px 28px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.message {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--notice-bg);
+  color: var(--notice-ink);
+  font-weight: 600;
+}
+
+.strip {
+  min-height: 84px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.strip-count {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.strip-people {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px var(--gap);
+}
+
+.strip-person.alert {
+  color: var(--alert);
+  font-weight: 600;
+}
+
+.debug {
+  margin: 0;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.card {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.log-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.log {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  color: var(--muted);
+  font-size: 13px;
+  list-style: none;
+}
+
+.log li {
+  padding: 2px 0;
+}
+
+.button {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button[aria-pressed='true'] {
+  border-color: var(--alert);
+  color: var(--alert);
+}
+
+.button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.snapshot:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.control {
+  display: block;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.control input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  accent-color: var(--accent);
+}

@@ -39,4 +39,6 @@ export const CONFIG = {
   beepOnMs: 300,
   beepOffMs: 200,
   beepPeakGain: 0.3,
+  overlayLineFrac: 0.003,
+  overlayLetterFrac: 0.045,
 } as const;

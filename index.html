@@ -4,9 +4,40 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Facial Expression Demo</title>
+    <link rel="icon" href="data:," />
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app" class="layout">
+      <main class="main">
+        <div class="stage">
+          <video id="video" playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <button id="start" class="start" type="button">Start camera</button>
+        </div>
+        <p id="message" class="message" role="status" hidden></p>
+        <section id="strip" class="strip" aria-label="Faces in view"></section>
+        <pre id="debug" class="debug" hidden></pre>
+      </main>
+      <aside class="panel">
+        <section class="card log-card">
+          <h2>Activity log</h2>
+          <ol id="log" class="log"></ol>
+        </section>
+        <section class="card">
+          <h2>Alarm</h2>
+          <button id="mute" class="button" type="button" aria-pressed="false">Mute</button>
+          <label class="control">
+            <span>Volume <output id="volume-value"></output></span>
+            <input id="volume" type="range" min="0" max="1" step="0.05" value="1" />
+          </label>
+          <label class="control">
+            <span>Sound after <output id="delay-value"></output></span>
+            <input id="delay" type="range" step="1" />
+          </label>
+        </section>
+        <button id="snapshot" class="button snapshot" type="button" disabled>Snapshot</button>
+      </aside>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
