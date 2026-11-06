@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+DrowsySign = Literal["slowBlinks", "droopy", "headDroop", "stayedClosed"]
+
 Label = Literal[
     "sleeping", "drowsy", "yawning", "angry", "laughing", "smiling", "crying", "neutral"
 ]
