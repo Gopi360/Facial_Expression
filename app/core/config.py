@@ -63,6 +63,8 @@ class Config:
     frontal_yaw_deg: float = 20
     min_red_ms: int = 1000
     jpeg_max_bytes: int = 2000000
+    overlay_line_frac: float = 0.003
+    overlay_letter_frac: float = 0.045
 
 
 CONFIG = Config()
