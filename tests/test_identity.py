@@ -109,14 +109,18 @@ def test_side_view_signature_is_not_stored():
 def test_stored_signatures_are_capped():
     ident = Identity()
     seen(ident, {1}, 0)
-    for k in range(CONFIG.identity_max_signatures + 3):
-        v = vec(0) if k == 0 else vec(k)
-        ident.add_signature(1, v, True, k)
-    # first (oldest) signature was dropped, so it no longer matches
+    first = (vec(0) + vec(1)) / np.sqrt(2)
+    ident.add_signature(1, first, True, 0)
+    for k in range(CONFIG.identity_max_signatures + 2):
+        ident.add_signature(1, vec(1) + 0.05 * vec(k + 2), True, k + 1)
     seen(ident, set(), 9000, active=set())
     seen(ident, {2}, 9100)
-    ident.add_signature(2, vec(0), True, 9100)
+    ident.add_signature(2, vec(0), True, 9100)  # only matched the dropped first
     assert ident.letter_for(2) != "A"
+    seen(ident, set(), 20000, active=set())
+    seen(ident, {3}, 20100)
+    ident.add_signature(3, vec(1) + 0.05 * vec(2), True, 20100)
+    assert ident.letter_for(3) == "A"
 
 
 def test_lettered_track_never_flips_to_another_letter():
@@ -128,6 +132,64 @@ def test_lettered_track_never_flips_to_another_letter():
     ident.sync({2}, {1, 2}, 200)  # A hidden
     ident.add_signature(2, vec(0), True, 1500)  # looks like A
     assert ident.letter_for(2) == "B"
+    assert len(ident._signatures["B"]) == 1
+
+
+def test_old_stripped_track_does_not_become_a_phantom_person():
+    ident = Identity()
+    seen(ident, {1}, 0)
+    ident.add_signature(1, vec(0), True, 0)
+    seen(ident, {1}, 5000)
+    ident.sync({2}, {1, 2}, 5500)
+    ident.add_signature(2, vec(0), True, 5500)
+    assert ident.letter_for(2) == "A"
+    for t in (5600, 6000, 9000):
+        ident.sync({2}, {1, 2}, t)
+    assert ident.letter_for(1) is None
+    assert ident.people_count() == 1
+
+
+def test_stripped_track_can_rebind_to_a_known_person():
+    ident = Identity()
+    seen(ident, {1}, 0)
+    ident.add_signature(1, vec(0), True, 0)
+    seen(ident, {1, 2}, 100)
+    ident.add_signature(2, vec(1), True, 100)  # B
+    ident.sync({2}, {1, 2}, 200)  # A hidden
+    ident.sync({3}, {1, 2, 3}, 5000)  # B hidden too
+    ident.add_signature(3, vec(0), True, 5000)  # A takes track 3, track 1 stripped
+    ident.sync({1}, {1, 2, 3}, 5100)  # track 1 comes back into view as B
+    ident.add_signature(1, vec(1), True, 5100)
+    assert ident.letter_for(1) == "B"
+    assert ident.letter_for(3) == "A"
+    assert ident.people_count() == 2
+
+
+def test_stranger_on_a_lettered_track_does_not_fill_its_store():
+    ident = Identity()
+    seen(ident, {1}, 0)
+    ident.add_signature(1, vec(0), True, 0)
+    ident.add_signature(1, vec(1), True, 1500)  # stranger inherits the track
+    assert len(ident._signatures["A"]) == 1
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {2}, 9100)
+    ident.add_signature(2, vec(1), True, 9100)
+    assert ident.letter_for(2) == "B"
+
+
+def test_crossing_people_do_not_swap_stores():
+    ident = Identity()
+    seen(ident, {1, 2}, 0)
+    ident.add_signature(1, vec(0), True, 0)  # A
+    ident.add_signature(2, vec(1), True, 0)  # B
+    ident.add_signature(1, vec(1), True, 1500)  # tracks swapped while crossing
+    ident.add_signature(2, vec(0), True, 1500)
+    assert len(ident._signatures["A"]) == 1
+    assert len(ident._signatures["B"]) == 1
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {3}, 9100)
+    ident.add_signature(3, vec(0), True, 9100)
+    assert ident.letter_for(3) == "A"
 
 
 def test_needs_signature_rules():

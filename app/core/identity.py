@@ -60,8 +60,12 @@ class Identity:
             self._tracks.setdefault(tid, _TrackState(first_seen_ms=now_ms))
         for tid in [t for t in self._tracks if t not in active_ids]:
             del self._tracks[tid]
-        for t in self._tracks.values():
-            if t.letter is None and now_ms - t.first_seen_ms >= CONFIG.identity_pending_ms:
+        for tid, t in self._tracks.items():
+            if t.letter is not None:
+                continue
+            if tid not in self._visible:
+                t.first_seen_ms = now_ms  # the pending clock only runs while visible
+            elif now_ms - t.first_seen_ms >= CONFIG.identity_pending_ms:
                 t.letter = self._take_next_letter()
 
     def add_signature(
@@ -78,6 +82,7 @@ class Identity:
                 for other in self._tracks.values():
                     if other is not track and other.letter == letter:
                         other.letter = None
+                        other.first_seen_ms = now_ms
                 track.letter = letter
             else:
                 track.letter = self._take_next_letter()
@@ -89,10 +94,14 @@ class Identity:
                 return  # clearly someone else: do not flip, do not learn
 
         if frontal and track.letter is not None and track.letter != UNKNOWN:
-            store = self._signatures.setdefault(
-                track.letter, deque(maxlen=CONFIG.identity_max_signatures)
-            )
-            store.append(sig)
+            existing = self._signatures.get(track.letter)
+            if existing and self._score(sig, track.letter) < CONFIG.identity_match_at:
+                return  # does not look like this letter's person: do not learn it
+            if existing is None:
+                existing = self._signatures[track.letter] = deque(
+                    maxlen=CONFIG.identity_max_signatures
+                )
+            existing.append(sig)
 
     # -- helpers ---------------------------------------------------------
     def _visible_letters(self, except_id: int) -> set[str]:
