@@ -35,4 +35,8 @@ export const CONFIG = {
   angrySmileMax: 0.2,
   baselineOpenEyesBelow: 0.5,
   drowsyMinConfidence: 0.5,
+  beepHz: 880,
+  beepOnMs: 300,
+  beepOffMs: 200,
+  beepPeakGain: 0.3,
 } as const;
