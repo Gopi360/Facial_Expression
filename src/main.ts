@@ -20,6 +20,7 @@ const SOUND_ERROR_MESSAGE = 'The alarm sound could not be started. Reload the pa
 const DETECT_ERROR_MESSAGE = 'Face detection stopped working. Reload the page to try again.';
 const SNAPSHOT_ERROR_MESSAGE = 'The snapshot could not be saved. Please try again.';
 const DEBUG_LOG_ERROR_MESSAGE = 'The debug log could not be saved. Please try again.';
+const PAUSED_MESSAGE = 'Detection paused while this tab was hidden';
 
 /** What is remembered for one letter. A face in its grace keeps its last person. */
 interface FaceState {
@@ -62,6 +63,8 @@ let log: LogEntry[] = [];
 
 let beeper: Beeper | null = null;
 let cameraRunning = false;
+let detecting = false;
+let pausedNoteUntilMs: number | null = null;
 let detectFailed = false;
 let muted = false;
 let delaySec: number = CONFIG.defaultDelaySec;
@@ -96,8 +99,16 @@ function matchOverlayToVideo(): void {
   if (overlay.height !== video.videoHeight) overlay.height = video.videoHeight;
 }
 
+/** Only the note itself is cleared, since an error may have taken the message slot since. */
+function clearPausedNote(nowMs: number): void {
+  if (pausedNoteUntilMs === null || nowMs < pausedNoteUntilMs) return;
+  pausedNoteUntilMs = null;
+  if (message.textContent === PAUSED_MESSAGE) showMessage(message, null);
+}
+
 function processFrame(detector: Detector, sound: Beeper, nowMs: number): void {
   const tracked = tracker.update(detectFaces(detector, nowMs), nowMs);
+  clearPausedNote(nowMs);
 
   const visible: Person[] = [];
   const debugText: string[] = [];
@@ -147,6 +158,7 @@ function processFrame(detector: Detector, sound: Beeper, nowMs: number): void {
 }
 
 function runLoop(detector: Detector, sound: Beeper): void {
+  detecting = true;
   let lastFrameMs = -Infinity;
   const tick = (nowMs: number): void => {
     if (!cameraRunning) return;
@@ -158,8 +170,23 @@ function runLoop(detector: Detector, sound: Beeper): void {
   requestAnimationFrame(tick);
 }
 
+/**
+ * Frames stop while the tab is hidden but the beeper runs on timers, so the alarm
+ * would stick on. Frames after return turn it back on if it is still needed.
+ */
+function onVisibilityChange(): void {
+  if (document.hidden) {
+    beeper?.setSounding(false);
+    return;
+  }
+  if (!detecting || detectFailed) return;
+  showMessage(message, PAUSED_MESSAGE);
+  pausedNoteUntilMs = performance.now() + CONFIG.pausedNoteMs;
+}
+
 function onCameraEnded(sound: Beeper, err: unknown): void {
   cameraRunning = false;
+  detecting = false;
   sound.setSounding(false);
   snapshotButton.disabled = true;
   drawOverlay(overlay, []);
@@ -209,6 +236,7 @@ async function start(): Promise<void> {
 }
 
 startButton.addEventListener('click', () => void start());
+document.addEventListener('visibilitychange', onVisibilityChange);
 
 muteButton.addEventListener('click', () => {
   muted = !muted;

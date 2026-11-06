@@ -42,6 +42,9 @@ npm run build     # type-check and production build into dist/
 - A person who arrives with eyes already closed gives a poor baseline until they open them.
 - Glasses, dim light and turned heads reduce accuracy.
 - Expression reading is a rough guess at a face, not a measure of what someone feels.
+- A person whose eyes never read as open (closure at 0.5 or above at rest) can read as about to sleep or sleeping for their first 10 seconds or so, until the baseline falls back to a low percentile of what it saw. Resting closure above `baselineFallbackMaxClosure` is treated as truly closed eyes and never becomes the baseline.
+- About to sleep and head droop can sound before the "Sound after" slider. That slider sets the seconds of closed eyes for sleeping. About to sleep sounds as soon as its label appears, and a drooping head with closed eyes can get there in about 1.5 seconds.
+- Detection stops while the tab is hidden, because the browser stops giving the page frames. The alarm is silenced and will not sound for anyone until you come back. On return the page shows "Detection paused while this tab was hidden" for a few seconds, and after more than about 2.5 seconds away the closed-eye count starts again. Keep the tab in view during a demo.
 - The detection numbers have not yet been tuned on a real camera. See "Tuning on camera" below. Expect some wrong labels, especially for angry and crying.
 
 ## Tuning on camera
@@ -49,10 +52,15 @@ npm run build     # type-check and production build into dist/
 The thresholds in `src/core/config.ts` are starting estimates. They have not been tuned, so treat the current accuracy as unknown until you have done the steps below.
 
 1. Run `npm run dev` and open http://localhost:5173/?debug=1, then click Start camera.
-2. With `?debug=1` a debug line appears for each face, in the form `A: eyeClosure 0.05  lookDown 0.02  pitchDelta 0.00  smile 0.01  jawOpen 0.00  browDown 0.00  browInnerUp 0.00  frown 0.00`. Each line starts with the face's letter, followed by its current signal values (two decimals). These are the numbers the rules compare against `CONFIG`. Values are relative to a baseline taken from your face in the first couple of seconds, so start with a relaxed, open-eyed face.
-3. Check pitch direction first. Tip your head forward: `pitchDelta` must rise. If it falls, set `pitchSign` to `-1` in `src/core/config.ts`.
-4. Act out each expression and watch which numbers move. Adjust the matching thresholds in `src/core/config.ts` (for example `smileAt`, `laughJawAt`, `angryBrowAt`, `cryBrowAt`, `eyesClosedAt`, `headDroopDeg`).
-5. Run `npm test` after each change. If a test's scenario still holds but its values no longer match the new numbers, update the signals in that test. Do not delete tests.
+2. With `?debug=1` three debug lines appear for each face, and a "Download debug log" button below them. None of this shows without `?debug=1`.
+   - `A: eyeClosure 0.05  lookDown 0.02  pitchDelta 0.00  smile 0.01  jawOpen 0.00  browDown 0.00  browInnerUp 0.00  frown 0.00` is the live signals. These are the numbers the rules compare against `CONFIG`. Only `eyeClosure` and `pitchDelta` are relative to a baseline taken from your face in the first couple of seconds, so start with a relaxed, open-eyed face. All the others are raw scores.
+   - `A last 10s: eyeClosure 0.00 to 0.95  lookDown 0.00 to 0.30  pitchDelta -2.00 to 18.00` is the lowest and highest of the three sleep signals over the last 10 seconds, so you can read them after opening your eyes.
+   - `A drowsy: ...` says what is driving about to sleep: `no sign`, `sign droopy`, `sign slowBlinks`, `sign headDroop`, `sign stayedClosed`, or `strong expression blocking` when a held smile, angry or crying face is clearing the drowsy timers. `strong expression delays sleeping` means the sleep count is waiting for the longer expression limit.
+3. Use the debug log for anything you cannot watch with your eyes shut. Act it out, then click "Download debug log" within 30 seconds. It saves a JSON file to your Downloads folder and nothing is uploaded. The file holds about the last 30 seconds of each person's signals, label, confidence and drowsy state, plus the settings in use.
+4. Check `lookDown` during closed eyes first. Close your eyes for a few seconds and read `lookDown` from the log. If it reaches `lookDownAt`, the rules treat you as looking down: closed eyes then need `eyesClosedWhenLookingDownAt`, and the droopy and head droop signs are switched off. Raise `lookDownAt` above what you see before tuning anything else.
+5. Check pitch direction next. Tip your head forward: `pitchDelta` must rise. If it falls, set `pitchSign` to `-1` in `src/core/config.ts`.
+6. Act out each expression and watch which numbers move. Adjust the matching thresholds in `src/core/config.ts` (for example `smileAt`, `laughJawAt`, `angryBrowAt`, `cryBrowAt`, `eyesClosedAt`, `droopyEyesAt`, `lookDownAt`, `eyesClosedWhenLookingDownAt`, `headDroopDeg`, `headDroopEyesAt`).
+7. Run `npm test` after each change. If a test's scenario still holds but its values no longer match the new numbers, update the signals in that test. Do not delete tests.
 
 If angry cannot be made reliable by tuning, the design's fallback is adding `@vladmandic/face-api` for angry and sad only. Decide that deliberately; it is not part of the current build.
 
