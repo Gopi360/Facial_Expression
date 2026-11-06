@@ -1,9 +1,9 @@
 const pad = (n: number): string => String(n).padStart(2, '0');
 
-function fileName(d: Date): string {
+export function fileStamp(d: Date): string {
   const date = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
   const time = `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-  return `snapshot-${date}-${time}.png`;
+  return `${date}-${time}`;
 }
 
 /** Saves the picture as seen on screen. Throws if the canvas cannot be used. */
@@ -22,6 +22,6 @@ export function saveSnapshot(video: HTMLVideoElement, overlay: HTMLCanvasElement
 
   const link = document.createElement('a');
   link.href = canvas.toDataURL('image/png');
-  link.download = fileName(new Date());
+  link.download = `snapshot-${fileStamp(new Date())}.png`;
   link.click();
 }

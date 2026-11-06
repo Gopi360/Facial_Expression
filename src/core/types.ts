@@ -7,3 +7,5 @@ export interface Signals { eyeClosure: number; lookDown: number; pitchDelta: num
 export interface Reading { label: Label; confidence: number } // confidence 0..100
 export interface Person { letter: Letter; box: Box; reading: Reading }
 export interface LogEntry { at: Date; text: string }
+export type DrowsySign = 'slowBlinks' | 'droopy' | 'headDroop' | 'stayedClosed';
+export interface ClassifierDebug { drowsySign: DrowsySign | null; strongHeld: boolean; strongSustained: boolean }

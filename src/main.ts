@@ -6,10 +6,12 @@ import { appendLog, diffEvents } from './core/activityLog';
 import { shouldSound } from './core/alarmPolicy';
 import { PersonClassifier } from './core/classifier';
 import { CONFIG } from './core/config';
+import { DebugBuffer, debugLines, debugLogJson } from './core/debugLog';
 import { cameraErrorMessage, modelErrorMessage } from './core/errors';
 import { Baseline } from './core/signals';
 import { Tracker } from './core/tracker';
-import type { Label, Letter, LogEntry, Person, RawFace, Signals } from './core/types';
+import type { Label, Letter, LogEntry, Person, RawFace } from './core/types';
+import { saveDebugLog } from './ui/debugDownload';
 import { saveSnapshot } from './ui/snapshot';
 import { drawOverlay, renderLog, renderStrip, showMessage } from './ui/view';
 
@@ -17,6 +19,7 @@ const LOADING_MESSAGE = 'Loading...';
 const SOUND_ERROR_MESSAGE = 'The alarm sound could not be started. Reload the page to try again.';
 const DETECT_ERROR_MESSAGE = 'Face detection stopped working. Reload the page to try again.';
 const SNAPSHOT_ERROR_MESSAGE = 'The snapshot could not be saved. Please try again.';
+const DEBUG_LOG_ERROR_MESSAGE = 'The debug log could not be saved. Please try again.';
 
 /** What is remembered for one letter. A face in its grace keeps its last person. */
 interface FaceState {
@@ -37,7 +40,9 @@ const overlay = byId<HTMLCanvasElement>('overlay');
 const startButton = byId<HTMLButtonElement>('start');
 const message = byId('message');
 const strip = byId('strip');
+const debugPanel = byId('debug-panel');
 const debug = byId('debug');
+const debugDownloadButton = byId<HTMLButtonElement>('debug-download');
 const logList = byId('log');
 const muteButton = byId<HTMLButtonElement>('mute');
 const volumeSlider = byId<HTMLInputElement>('volume');
@@ -47,10 +52,11 @@ const delayValue = byId<HTMLOutputElement>('delay-value');
 const snapshotButton = byId<HTMLButtonElement>('snapshot');
 
 const debugOn = new URLSearchParams(window.location.search).get('debug') === '1';
-debug.hidden = !debugOn;
+debugPanel.hidden = !debugOn;
 
 const tracker = new Tracker();
 const faceStates = new Map<Letter, FaceState>();
+const debugBuffer = new DebugBuffer();
 let labels = new Map<Letter, Label>();
 let log: LogEntry[] = [];
 
@@ -90,16 +96,11 @@ function matchOverlayToVideo(): void {
   if (overlay.height !== video.videoHeight) overlay.height = video.videoHeight;
 }
 
-function debugLine(letter: Letter, signals: Signals): string {
-  const values = Object.entries(signals).map(([name, value]) => `${name} ${value.toFixed(2)}`);
-  return `${letter}: ${values.join('  ')}`;
-}
-
 function processFrame(detector: Detector, sound: Beeper, nowMs: number): void {
   const tracked = tracker.update(detectFaces(detector, nowMs), nowMs);
 
   const visible: Person[] = [];
-  const debugLines: string[] = [];
+  const debugText: string[] = [];
   for (const { letter, face } of tracked) {
     // A letter released and retaken in one update never leaves activeLetters,
     // for example after the tab was hidden, so old state is caught here.
@@ -113,7 +114,12 @@ function processFrame(detector: Detector, sound: Beeper, nowMs: number): void {
     const person: Person = { letter, box: face.box, reading };
     faceStates.set(letter, { baseline, classifier, person, lastSeenMs: nowMs });
     visible.push(person);
-    if (debugOn) debugLines.push(debugLine(letter, signals));
+    if (debugOn) {
+      const info = classifier.debugInfo();
+      debugBuffer.add({ tMs: nowMs, letter, signals, ...reading, ...info });
+      const ranges = debugBuffer.recentRanges(letter, nowMs);
+      debugText.push(...debugLines(letter, signals, ranges, info));
+    }
   }
 
   const active = new Set(tracker.activeLetters());
@@ -135,7 +141,7 @@ function processFrame(detector: Detector, sound: Beeper, nowMs: number): void {
     log = appendLog(log, events);
     renderLog(logList, log);
   }
-  if (debugOn) debug.textContent = debugLines.join('\n');
+  if (debugOn) debug.textContent = debugText.join('\n');
 
   sound.setSounding(shouldSound([...nextLabels.values()], muted));
 }
@@ -229,6 +235,15 @@ snapshotButton.addEventListener('click', () => {
   } catch (err) {
     console.error('Snapshot failed', err);
     showMessage(message, SNAPSHOT_ERROR_MESSAGE);
+  }
+});
+
+debugDownloadButton.addEventListener('click', () => {
+  try {
+    saveDebugLog(debugLogJson(debugBuffer.samples(), new Date()));
+  } catch (err) {
+    console.error('Debug log failed', err);
+    showMessage(message, DEBUG_LOG_ERROR_MESSAGE);
   }
 });
 

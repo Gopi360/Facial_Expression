@@ -1,6 +1,6 @@
 import { CONFIG } from './config';
 import { clamp01 } from './signals';
-import type { Reading, Signals } from './types';
+import type { ClassifierDebug, DrowsySign, Reading, Signals } from './types';
 
 const MS_PER_SEC = 1000;
 
@@ -56,6 +56,7 @@ interface State {
   droopySinceMs: number | null;
   headDroopSinceMs: number | null;
   drowsySignMs: number | null; // last time any drowsy sign was true
+  drowsySign: DrowsySign | null; // which sign that was
   shown: Reading | null;
   differsSinceMs: number | null; // when the candidate first stopped matching the shown label
 }
@@ -75,6 +76,7 @@ function freshState(): State {
     droopySinceMs: null,
     headDroopSinceMs: null,
     drowsySignMs: null,
+    drowsySign: null,
     shown: null,
     differsSinceMs: null,
   };
@@ -83,6 +85,12 @@ function freshState(): State {
 /** Turns one person's signals over time into a steady label and confidence. */
 export class PersonClassifier {
   private state = freshState();
+  private debug: ClassifierDebug = { drowsySign: null, strongHeld: false, strongSustained: false };
+
+  /** What drove the last update, for the debug view. Has no effect on the Reading. */
+  debugInfo(): ClassifierDebug {
+    return this.debug;
+  }
 
   update(s: Signals, nowMs: number, delaySec: number): Reading {
     const { lastUpdateMs } = this.state;
@@ -96,6 +104,11 @@ export class PersonClassifier {
     const sustained = this.sustainedStrong(s, nowMs, strong);
     this.trackClosure(s, nowMs, delayMs);
     this.trackDrowsySigns(s, nowMs, sustained);
+    this.debug = {
+      drowsySign: this.drowsyActive(nowMs) ? this.state.drowsySign : null,
+      strongHeld: strong,
+      strongSustained: sustained,
+    };
     return this.display(s, this.candidate(s, nowMs, delayMs, strong), nowMs);
   }
 
@@ -156,6 +169,7 @@ export class PersonClassifier {
       st.droopySinceMs = null;
       st.headDroopSinceMs = null;
       st.drowsySignMs = null;
+      st.drowsySign = null;
       return;
     }
 
@@ -181,26 +195,36 @@ export class PersonClassifier {
     const droopyHeld =
       !closed && st.droopySinceMs !== null && nowMs - st.droopySinceMs >= CONFIG.droopyHoldMs;
     const slowBlinks = st.slowBlinkEndsMs.length >= CONFIG.slowBlinksForDrowsy;
-    const signPresent =
-      slowBlinks ||
-      droopyHeld ||
-      (st.headDroopSinceMs !== null && nowMs - st.headDroopSinceMs >= CONFIG.headDroopHoldMs) ||
-      (closed && st.shown?.label === 'drowsy');
+    const headDroopHeld =
+      st.headDroopSinceMs !== null && nowMs - st.headDroopSinceMs >= CONFIG.headDroopHoldMs;
+    const signs: [boolean, DrowsySign][] = [
+      [slowBlinks, 'slowBlinks'],
+      [droopyHeld, 'droopy'],
+      [headDroopHeld, 'headDroop'],
+      [closed && st.shown?.label === 'drowsy', 'stayedClosed'],
+    ];
+    const sign = signs.find(([present]) => present)?.[1];
     // A strong frame neither ends drowsy nor starts it, so a laugh that begins
     // just as a hold runs out does not sound the alarm before it is sustained.
-    if (!signPresent || isStrongExpression(s)) return;
+    if (!sign || isStrongExpression(s)) return;
     st.drowsySignMs = nowMs;
+    st.drowsySign = sign;
     if (slowBlinks) st.slowBlinkEndsMs = []; // one event, so drowsy ends after drowsyClearMs
   }
 
+  private drowsyActive(nowMs: number): boolean {
+    const { drowsySignMs } = this.state;
+    return drowsySignMs !== null && nowMs - drowsySignMs < CONFIG.drowsyClearMs;
+  }
+
   private candidate(s: Signals, nowMs: number, delayMs: number, strong: boolean): Reading {
-    const { closedSinceMs, drowsySignMs, lastClosedStrength } = this.state;
+    const { closedSinceMs, lastClosedStrength } = this.state;
     const neededMs = strong ? Math.max(delayMs, CONFIG.expressionLimitMs) : delayMs;
     if (closedSinceMs !== null && nowMs - closedSinceMs >= neededMs) {
       // Through the open grace this stays the strength of the last closed frame.
       return { label: 'sleeping', confidence: percent(lastClosedStrength) };
     }
-    if (drowsySignMs !== null && nowMs - drowsySignMs < CONFIG.drowsyClearMs) {
+    if (this.drowsyActive(nowMs)) {
       const strength = Math.max(s.eyeClosure, CONFIG.drowsyMinConfidence);
       return { label: 'drowsy', confidence: percent(strength) };
     }

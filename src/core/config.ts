@@ -28,6 +28,8 @@ export const CONFIG = {
   minDelaySec: 1,
   maxDelaySec: 10,
   logCap: 100,
+  debugBufferMs: 30000,
+  debugRangeMs: 10000,
   smileAt: 0.35,
   strongSmileAt: 0.5,
   laughJawAt: 0.25,

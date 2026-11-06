@@ -134,6 +134,11 @@ body {
   font-size: 12px;
 }
 
+.debug-download {
+  width: auto;
+  margin-top: 8px;
+}
+
 .card {
   padding: 12px 14px;
   border: 1px solid var(--line);

@@ -490,3 +490,59 @@ describe('display', () => {
     }
   });
 });
+
+describe('debug info', () => {
+  const droopy = { ...OPEN, eyeClosure: 0.4 };
+
+  it('starts quiet', () => {
+    const classifier = new PersonClassifier();
+    classifier.update(OPEN, 0, 3);
+
+    expect(classifier.debugInfo()).toEqual({
+      drowsySign: null,
+      strongHeld: false,
+      strongSustained: false,
+    });
+  });
+
+  it('names the droopy sign while it is driving drowsy, then lets go', () => {
+    const classifier = new PersonClassifier();
+    run(classifier, droopy, 0, 3100);
+    expect(classifier.debugInfo().drowsySign).toBe('droopy');
+
+    run(classifier, OPEN, 3166, 5300);
+    expect(classifier.debugInfo().drowsySign).toBeNull();
+  });
+
+  it('names head droop', () => {
+    const classifier = new PersonClassifier();
+    run(classifier, { ...OPEN, eyeClosure: 0.5, pitchDelta: 20 }, 0, 1600);
+
+    expect(classifier.debugInfo().drowsySign).toBe('headDroop');
+  });
+
+  it('keeps naming slow blinks after the one-frame event', () => {
+    const classifier = new PersonClassifier();
+    for (const fromMs of [0, 1000]) {
+      run(classifier, CLOSED, fromMs, fromMs + 500);
+      run(classifier, OPEN, fromMs + 566, fromMs + 900);
+    }
+
+    expect(classifier.debugInfo().drowsySign).toBe('slowBlinks');
+  });
+
+  it('tells a lone strong frame from a sustained one', () => {
+    const classifier = new PersonClassifier();
+    classifier.update(ANGRY, 0, 3);
+    expect(classifier.debugInfo()).toMatchObject({ strongHeld: true, strongSustained: false });
+
+    run(classifier, ANGRY, 66, 600);
+    expect(classifier.debugInfo()).toMatchObject({ strongHeld: true, strongSustained: true });
+  });
+
+  it('does not change what update returns', () => {
+    const classifier = new PersonClassifier();
+
+    expect(Object.keys(classifier.update(OPEN, 0, 3)).sort()).toEqual(['confidence', 'label']);
+  });
+});
