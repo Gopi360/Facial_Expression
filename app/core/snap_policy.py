@@ -21,3 +21,8 @@ class SnapPolicy:
             return False
         self._fired.add(letter)
         return True
+
+    def drop(self, letter: str) -> None:
+        """Forget a letter's red start and fired state, for when that person leaves."""
+        self._red_since.pop(letter, None)
+        self._fired.discard(letter)

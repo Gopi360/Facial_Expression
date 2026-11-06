@@ -33,3 +33,21 @@ def test_two_people_have_separate_snap_events():
     assert not p.update("B", True, 1000)
     assert p.update("B", True, 1500)
     assert not p.update("A", True, 1600)
+
+
+def test_drop_rearms_a_letter():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    assert p.update("A", True, 1000)
+    p.drop("A")
+    assert not p.update("A", True, 5000)
+    assert p.update("A", True, 6000)
+
+
+def test_drop_forgets_red_start():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    p.update("A", True, 900)
+    p.drop("A")
+    assert not p.update("A", True, 1100)
+    assert not p.update("A", True, 1100 + 200)
