@@ -491,12 +491,64 @@ def test_time_far_away_does_not_add_to_a_closure_that_carries_on(rig):
 
 
 def test_alarming_person_going_far_stops_the_alarm(rig):
+    """Only after letter_release_ms of far views: a sleeper's tipped head looks the same at first."""
     rig.go_red()
-    rig.run(1000, far())
+    rig.run(CONFIG.letter_release_ms - 3 * STEP_MS, far())
+    assert rig.result.alarm is True
+    rig.run(5 * STEP_MS, far())
     assert rig.result.alarm is False
     assert rig.result.people[0]["red"] is False
     assert rig.log_text().count("| System | alarm stopped") == 1
     assert len(rig.snaps()) == 1
+
+
+def test_sleeper_mediapipe_keeps_losing_never_reads_far(rig):
+    """Moving head: MediaPipe catches 1 frame in 8, YuNet sees the rest."""
+    rig.go_red()
+    for _ in range(40):
+        rig.finder.faces = [face(1, closed=True)]
+        assert rig.frame().alarm is True
+        rig.finder.faces = [far()]
+        for _ in range(7):
+            assert rig.frame().alarm is True
+    text = rig.log_text()
+    assert text.count("alarm started") == 1
+    assert "alarm stopped" not in text
+    assert "too far" not in text
+    assert len(rig.snaps()) == 1
+
+
+def test_a_gap_in_the_far_views_restarts_a_red_persons_wait(rig):
+    rig.go_red()
+    rig.run(CONFIG.letter_release_ms - 3 * STEP_MS, far())
+    rig.run(STEP_MS)
+    rig.run(CONFIG.letter_release_ms - 3 * STEP_MS, far())
+    assert rig.result.alarm is True
+    assert "too far" not in rig.log_text()
+
+
+def test_a_person_who_is_not_red_still_reads_far_quickly(rig):
+    rig.run(3000, face(1))
+    rig.run(CONFIG.far_confirm_frames * STEP_MS, far())
+    assert rig.result.lines == [FAR_LINE]
+
+
+def test_red_just_short_of_the_snap_then_hidden_then_far_still_gets_its_proof(rig):
+    rig.first_red_frame()
+    rig.run(CONFIG.min_red_ms - STEP_MS, face(1, closed=True))
+    assert rig.snaps() == []
+    rig.run(CONFIG.letter_release_ms + 3 * STEP_MS, far())
+    assert rig.result.lines == [FAR_LINE]
+    assert len(rig.snaps()) == 1
+    assert rig.pipe._red_proof == {}
+
+
+def test_red_for_under_the_snap_limit_then_far_takes_no_snap(rig):
+    rig.first_red_frame()
+    rig.run(300, face(1, closed=True))
+    rig.run(CONFIG.letter_release_ms + 3 * STEP_MS, far())
+    assert rig.snaps() == []
+    assert rig.pipe._red_proof == {}
 
 
 def test_far_view_strips_nothing_and_stores_nothing(rig):

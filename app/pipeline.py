@@ -63,6 +63,15 @@ class _PersonState:
 
 
 @dataclass
+class _FarRun:
+    """One track's far views in a row. Once confirmed, it keeps through a missed frame."""
+
+    since_ms: float
+    views: int = 0
+    confirmed: bool = False
+
+
+@dataclass
 class _RedProof:
     """The last frame that showed a red person, ready to save if they are lost before a snap."""
 
@@ -172,7 +181,7 @@ class Pipeline:
         self._people: dict[str, _PersonState] = {}  # by state key, never deleted
         self._signature_failed_ms: dict[int, float] = {}
         self._signature_tried_ms: dict[int, float] = {}
-        self._far_runs: dict[int, int] = {}  # far frames in a row, by track
+        self._far_runs: dict[int, _FarRun] = {}  # by track
         self._crowded_frames = 0
         self._labels: dict[str, str] = {}
         self._red_proof: dict[str, _RedProof] = {}
@@ -197,7 +206,7 @@ class Pipeline:
         faces = self._find(frame, warnings)
         seen = dict(self._tracker.update(faces, now_ms))
         active_ids = self._tracker.active_ids()
-        tracked = self._without_unconfirmed(seen, active_ids)
+        tracked = self._without_unconfirmed(seen, active_ids, now_ms)
         self._identity.sync(set(tracked), active_ids, now_ms)
         self._heavy_check(frame, tracked, now_ms, warnings)
 
@@ -263,26 +272,37 @@ class Pipeline:
             return []
 
     def _without_unconfirmed(
-        self, seen: dict[int, RawFace], active_ids: set[int]
+        self, seen: dict[int, RawFace], active_ids: set[int], now_ms: float
     ) -> dict[int, RawFace]:
         """A far face counts as not seen until its track has lasted, which keeps false faces
         off the screen, and a near person lost for a moment hidden rather than called far.
         A near frame starts the count again, so a face on the edge of the two stays near.
         """
-        needed = CONFIG.far_confirm_frames
         for track_id, run in list(self._far_runs.items()):
-            if track_id not in active_ids or (track_id not in seen and run < needed):
+            if track_id not in active_ids or (track_id not in seen and not run.confirmed):
                 del self._far_runs[track_id]
         for track_id, face in seen.items():
             if face.far:
-                self._far_runs[track_id] = self._far_runs.get(track_id, 0) + 1
+                run = self._far_runs.setdefault(track_id, _FarRun(now_ms))
+                run.views += 1
+                run.confirmed = run.confirmed or self._far_is_proven(track_id, run, now_ms)
             else:
                 self._far_runs.pop(track_id, None)
         return {
             track_id: face
             for track_id, face in seen.items()
-            if not face.far or self._far_runs[track_id] >= needed
+            if not face.far or self._far_runs[track_id].confirmed
         }
+
+    def _far_is_proven(self, track_id: int, run: _FarRun, now_ms: float) -> bool:
+        """A sleeper's tipped head can lose MediaPipe and shrink under YuNet, which looks just
+        like walking away. So a red person gets as long as a lost person would have.
+        """
+        if run.views < CONFIG.far_confirm_frames:
+            return False
+        state = self._people.get(self._identity.state_key(track_id))
+        red = state is not None and state.reading is not None and is_red(state.reading.label)
+        return not red or now_ms - run.since_ms >= CONFIG.letter_release_ms
 
     def _overflow(self, faces: list[RawFace]) -> bool:
         """Too many near faces say so at once. Far ones could be false, so they must last."""
@@ -439,14 +459,7 @@ class Pipeline:
         for key in self._labels:
             if key not in present:
                 self._forget_emotion(key)
-                owed = self._snaps.drop(key)
-                proof = self._red_proof.pop(key, None)
-                if owed and proof is not None:
-                    events.append(
-                        self._snap_event(
-                            proof.frame, proof.people, proof.person, proof.at, at, warnings
-                        )
-                    )
+                events += self._owed_snap(key, at, warnings)
         self._labels = {key: r.label for key, r in readings.items()}
 
         alarm = should_sound(self._labels.values())
@@ -455,6 +468,9 @@ class Pipeline:
         self._alarm = alarm
 
         for key, person in present.items():
+            if person.reading.label == "far":
+                events += self._owed_snap(key, at, warnings)  # as lost to the camera as leaving
+                continue
             red = is_red(person.reading.label)
             if self._snaps.update(key, red, now_ms, person.visible):
                 events.append(self._snap_event(frame, people, person, at, at, warnings))
@@ -463,6 +479,14 @@ class Pipeline:
             elif person.visible:
                 self._red_proof[key] = _RedProof(frame, people, person, at)
         return events
+
+    def _owed_snap(self, key: str, at: datetime, warnings: list[str]) -> list[LogEvent]:
+        """End a red run with nobody left to see, saving its last visible frame if it earned one."""
+        owed = self._snaps.drop(key)
+        proof = self._red_proof.pop(key, None)
+        if not owed or proof is None:
+            return []
+        return [self._snap_event(proof.frame, proof.people, proof.person, proof.at, at, warnings)]
 
     def _forget_emotion(self, key: str) -> None:
         """Once released, the last scores are stale: they must not label a return."""
