@@ -45,7 +45,9 @@ def _same_face(far: Box, near: Box) -> bool:
     return overlap_w * overlap_h >= CONFIG.far_same_face_overlap * smaller
 
 
-def _far_faces(rows: np.ndarray | None, near: list[RawFace], w: int, h: int) -> list[RawFace]:
+def _far_faces(
+    rows: np.ndarray | None, near: list[RawFace], w: int, h: int, reused: bool = False
+) -> list[RawFace]:
     """YuNet results that are not a face MediaPipe already has. Each row is a box, five points
     already in SFace order, and a score. A wide face MediaPipe missed stays missed, as a person
     close to the camera is never too far to read.
@@ -63,7 +65,7 @@ def _far_faces(rows: np.ndarray | None, near: list[RawFace], w: int, h: int) -> 
         if any(_same_face(box, face.box) for face in near):
             continue
         points = [(float(row[i]), float(row[i + 1])) for i in range(4, 14, 2)]
-        faces.append(RawFace(box, {}, 0.0, 0.0, points, far=True))
+        faces.append(RawFace(box, {}, 0.0, 0.0, points, far=True, reused=reused))
     return faces
 
 
@@ -123,7 +125,7 @@ class FaceFinder:
                 self._far_rows = None
                 self._yunet.setInputSize((w, h))
                 self._far_rows = self._yunet.detect(frame_bgr)[1]
-            return _far_faces(self._far_rows, near, w, h)
+            return _far_faces(self._far_rows, near, w, h, reused=not due)
         except Exception as e:
             raise FarDetectFailed(near) from e
 

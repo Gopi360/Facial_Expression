@@ -285,7 +285,7 @@ class Pipeline:
         for track_id, face in seen.items():
             if face.far:
                 run = self._far_runs.setdefault(track_id, _FarRun(now_ms))
-                run.views += 1
+                run.views += 0 if face.reused else 1
                 run.confirmed = run.confirmed or self._far_is_proven(track_id, run, now_ms)
             else:
                 self._far_runs.pop(track_id, None)

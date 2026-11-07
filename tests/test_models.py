@@ -227,28 +227,27 @@ def test_far_model_failure_keeps_the_near_faces():
     assert failure.value.near == near
 
 
-def test_far_model_runs_on_every_second_frame_and_its_faces_are_reused():
-    assert CONFIG.far_every_frames == 2
+def test_far_model_runs_on_schedule_and_its_faces_are_reused_between():
     yunet = FakeYunet(ONE_FAR, None)
     finder = finder_on(yunet)
-    assert len(finder._find_far(BLANK, [])) == 1
+    found = [finder._find_far(BLANK, []) for _ in range(CONFIG.far_every_frames)]
     assert yunet.calls == 1
-    assert len(finder._find_far(BLANK, [])) == 1  # reused
-    assert yunet.calls == 1
+    assert [len(faces) for faces in found] == [1] * CONFIG.far_every_frames
+    assert [faces[0].reused for faces in found] == [False] + [True] * (CONFIG.far_every_frames - 1)
     assert finder._find_far(BLANK, []) == []
     assert yunet.calls == 2
 
 
 def test_a_reused_far_face_gives_way_to_a_near_face_found_since():
-    finder = finder_on(FakeYunet(ONE_FAR))
+    finder = finder_on(FakeYunet(ONE_FAR, ONE_FAR))
     assert len(finder._find_far(BLANK, [])) == 1
     assert finder._find_far(BLANK, [near_face(300, 220, 90, 110)]) == []
 
 
 def test_faces_from_before_a_far_model_failure_are_not_reused():
-    finder = finder_on(FakeYunet(ONE_FAR, cv2.error("broke")))
-    finder._find_far(BLANK, [])
-    finder._find_far(BLANK, [])
+    finder = finder_on(FakeYunet(ONE_FAR, cv2.error("broke"), None))
+    for _ in range(CONFIG.far_every_frames):
+        finder._find_far(BLANK, [])
     with pytest.raises(FarDetectFailed):
         finder._find_far(BLANK, [])
     assert finder._find_far(BLANK, []) == []
@@ -264,7 +263,8 @@ def test_a_30_px_face_gets_a_box_and_letter_through_the_real_pipeline(tmp_path):
         SessionFiles(tmp_path, start),
     )
     jpeg = cv2.imencode(".jpg", _frame_with_face(30))[1].tobytes()
-    frames = CONFIG.far_confirm_frames + CONFIG.identity_pending_ms // 100 + 5
+    confirming = CONFIG.far_confirm_frames * CONFIG.far_every_frames
+    frames = confirming + CONFIG.identity_pending_ms // 100 + 5
     for i in range(frames):
         result = pipeline.process(jpeg, i * 100, start + timedelta(milliseconds=i * 100), 3)
     assert result.lines == ["Person A is too far to read"]

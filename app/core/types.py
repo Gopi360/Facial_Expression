@@ -30,6 +30,7 @@ class RawFace:
     yaw_deg: float
     points: list[tuple[float, float]]  # 5 points, pixels
     far: bool = False  # too small to read: a box and points only, with empty scores
+    reused: bool = False  # a far face from YuNet's last run, not seen again on this frame
 
 
 class FarDetectFailed(Exception):

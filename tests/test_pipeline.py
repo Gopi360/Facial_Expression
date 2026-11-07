@@ -393,9 +393,10 @@ def test_a_nod_with_heavy_eyes_is_not_a_check_so_the_sleep_rule_keeps_its_person
 FAR_LINE = "Person A is too far to read"
 
 
-def far(marker=1, x=0.1, signature=None):
+def far(marker=1, x=0.1, signature=None, reused=False):
     """Real far faces have empty scores. The marker is only for FakeSigner."""
-    found = RawFace(Box(x, 0.1, 0.05, 0.05), {"marker": marker}, 0, 0, [(0.0, 0.0)] * 5, far=True)
+    points = [(0.0, 0.0)] * 5
+    found = RawFace(Box(x, 0.1, 0.05, 0.05), {"marker": marker}, 0, 0, points, True, reused)
     found.signature = signature
     return found
 
@@ -420,6 +421,16 @@ def test_far_face_shows_nothing_until_it_has_lasted(rig):
     result = rig.frame()
     assert [p["letter"] for p in result.people] == [None]
     assert result.count_text == "1 face found"
+
+
+def test_only_real_detections_count_towards_showing_a_far_face(rig):
+    for _ in range(CONFIG.far_confirm_frames - 1):
+        rig.finder.faces = [far()]
+        assert rig.frame().people == []
+        rig.finder.faces = [far(reused=True)]
+        assert rig.frame().people == []
+    rig.finder.faces = [far()]
+    assert rig.frame().count_text == "1 face found"
 
 
 def test_flickering_false_face_never_shows_and_costs_no_letter(rig):

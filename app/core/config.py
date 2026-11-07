@@ -82,7 +82,7 @@ class Config:
     low_fps_warning: float = 6  # the page warns if the frame rate stays under this
     low_fps_hold_ms: int = 4000  # for this long
     # far faces
-    far_confirm_frames: int = 5  # frames in a row before a far face shows at all
+    far_confirm_frames: int = 5  # real YuNet detections in a row before a far face shows at all
     far_every_frames: int = 2  # YuNet runs this often; frames between reuse what it found
     far_score_at: float = 0.7
     far_min_width_px: int = 16
