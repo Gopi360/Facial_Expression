@@ -32,6 +32,27 @@ BAD_DELAY = "The delay setting must be a number."
 NOT_STARTED = "The session has not started yet."
 ALREADY_STARTED = "The session has already started."
 FATAL_MESSAGE = "The app hit a problem and stopped this session. Reload the page to try again."
+STALLED_MESSAGE = "The app stopped responding. Reload the page, and restart the app if this repeats."
+
+# What the page reads from GET /config, so it holds no copy of these numbers.
+PAGE_CONFIG = (
+    "target_fps",
+    "min_delay_sec",
+    "max_delay_sec",
+    "default_delay_sec",
+    "paused_note_ms",
+    "warning_hold_ms",
+    "reply_timeout_ms",
+    "overlay_line_frac",
+    "overlay_letter_frac",
+    "frame_width",
+    "frame_height",
+    "jpeg_quality",
+    "beep_hz",
+    "beep_on_ms",
+    "beep_off_ms",
+    "beep_peak_gain",
+)
 
 _models: tuple[FaceFinder, EmotionModel, FaceSigner] | None = None
 _models_lock = threading.Lock()
@@ -66,8 +87,16 @@ def _origin_allowed(socket: WebSocket) -> bool:
     return origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
 
 
+class _Stalled(Exception):
+    """A pipeline call did not finish in time."""
+
+
 class _Session:
-    """One socket. Frames and control messages are handled one at a time, in order."""
+    """One socket. Frames and control messages are handled one at a time, in order.
+
+    A reader task takes messages off the socket into an inbox, so a close is seen even while
+    a pipeline call is running. Only run() acts on the inbox, which keeps the calls in turn.
+    """
 
     def __init__(self, socket: WebSocket, make: Callable[[bool], Pipeline]):
         self._socket = socket
@@ -75,12 +104,15 @@ class _Session:
         self._pipeline: Pipeline | None = None
         self._debug = False
         self._delay_sec: float = CONFIG.default_delay_sec
+        self._inbox: asyncio.Queue[dict] = asyncio.Queue()
+        self._gone = asyncio.Event()
 
     async def run(self) -> None:
+        reader = asyncio.create_task(self._read())
         try:
             while True:
-                message = await self._socket.receive()
-                if message["type"] == "websocket.disconnect":
+                message = await self._inbox.get()
+                if self._gone.is_set():
                     return
                 frame = message.get("bytes")
                 if frame is not None:
@@ -91,17 +123,57 @@ class _Session:
             pass
         except ModelsMissing as e:
             await self._stop(str(e))
+        except _Stalled:
+            logger.error("A pipeline call passed %d ms", CONFIG.reply_timeout_ms)
+            await self._stop(STALLED_MESSAGE)
         except Exception:
             logger.exception("Session failed")
             await self._stop(FATAL_MESSAGE)
         finally:
             self._close()
+            reader.cancel()
+
+    async def _read(self) -> None:
+        try:
+            while True:
+                message = await self._socket.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+                self._inbox.put_nowait(message)
+        except Exception:
+            logger.exception("Could not read from the socket")
+        finally:
+            self._gone.set()
+            self._inbox.put_nowait({})  # wakes run(), which then sees the session has gone
+
+    async def _guarded(self, call: Callable, *args: object) -> object:
+        """Run a pipeline call in a thread, and give up on it if it hangs or the client leaves."""
+        work = asyncio.create_task(asyncio.to_thread(call, *args))
+        work.add_done_callback(lambda done: done.cancelled() or done.exception())
+        gone = asyncio.create_task(self._gone.wait())
+        try:
+            await asyncio.wait(
+                {work, gone},
+                timeout=CONFIG.reply_timeout_ms / 1000,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            gone.cancel()
+        if self._gone.is_set():
+            # A healthy call ends in moments. Waiting for it keeps close from overlapping it.
+            await asyncio.wait({work}, timeout=CONFIG.frame_finish_grace_ms / 1000)
+            work.cancel()
+            raise WebSocketDisconnect()
+        if not work.done():
+            work.cancel()  # a stuck thread cannot be stopped, only left behind
+            raise _Stalled()
+        return work.result()
 
     async def _on_frame(self, jpeg: bytes) -> None:
         if self._pipeline is None:
             await self._error(NOT_STARTED)
             return
-        result = await asyncio.to_thread(
+        result = await self._guarded(
             self._pipeline.process, jpeg, time.monotonic() * 1000, datetime.now(), self._delay_sec
         )
         reply = {"type": "frame", **asdict(result)}
@@ -126,7 +198,7 @@ class _Session:
         elif self._pipeline is None:
             await self._error(NOT_STARTED)
         elif kind == "snapshot":
-            warning = await asyncio.to_thread(self._pipeline.snapshot, datetime.now())
+            warning = await self._guarded(self._pipeline.snapshot, datetime.now())
             if warning:
                 await self._error(warning)
         else:
@@ -170,6 +242,10 @@ class _Session:
 def create_app(make: Callable[[bool], Pipeline]) -> FastAPI:
     app = FastAPI()
     session_open = False
+
+    @app.get("/config")
+    def page_config() -> dict:
+        return {name: getattr(CONFIG, name) for name in PAGE_CONFIG}
 
     @app.websocket("/ws")
     async def session(socket: WebSocket) -> None:

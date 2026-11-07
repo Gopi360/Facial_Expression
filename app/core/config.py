@@ -65,6 +65,17 @@ class Config:
     jpeg_max_bytes: int = 2000000
     overlay_line_frac: float = 0.003
     overlay_letter_frac: float = 0.045
+    # the page and the session
+    frame_width: int = 640
+    frame_height: int = 480
+    jpeg_quality: float = 0.8
+    beep_hz: int = 880
+    beep_on_ms: int = 300
+    beep_off_ms: int = 200
+    beep_peak_gain: float = 0.3
+    warning_hold_ms: int = 5000
+    reply_timeout_ms: int = 5000
+    frame_finish_grace_ms: int = 1000
 
 
 CONFIG = Config()

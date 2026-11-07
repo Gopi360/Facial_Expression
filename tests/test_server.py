@@ -1,8 +1,11 @@
 import json
+import re
 import socket
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 import uvicorn
@@ -19,6 +22,8 @@ from app.server import create_app
 
 JPEG = b"\xff\xd8 pretend jpeg"
 SERVED_URL = "ws://127.0.0.1:8000/ws"
+HANG_LIMIT_SEC = 3  # a fake hang ends by itself, so a failing test fails instead of sticking
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
 class FakePipeline:
@@ -29,10 +34,21 @@ class FakePipeline:
         self.closed = []
         self.process_error = None
         self.snapshot_warning = None
+        self.hang = None  # an Event: process blocks until it is set
+        self.entered = threading.Event()
+        self.in_process = False
+        self.overlapped = False
+        self.order = []
 
     def process(self, jpeg, now_ms, at, delay_sec):
         if self.process_error:
             raise self.process_error
+        self.in_process = True
+        self.entered.set()
+        if self.hang:
+            self.hang.wait(HANG_LIMIT_SEC)
+        self.in_process = False
+        self.order.append("frame")
         self.frames.append((jpeg, now_ms, at, delay_sec))
         return FrameResult(
             count_text="1 face found",
@@ -46,6 +62,7 @@ class FakePipeline:
         )
 
     def snapshot(self, at):
+        self.overlapped = self.overlapped or self.in_process
         self.snapshots.append(at)
         return self.snapshot_warning
 
@@ -53,6 +70,7 @@ class FakePipeline:
         return [{"t_ms": 1.0, "letter": "A"}]
 
     def close(self, at):
+        self.order.append("close")
         self.closed.append(at)
 
 
@@ -358,6 +376,134 @@ def test_real_server_refuses_a_foreign_origin(real_port, factory):
         connect(f"ws://127.0.0.1:{real_port}/ws", origin="http://evil.example", proxy=None)
     assert refused.value.response.status_code == 403
     assert factory.made == []
+
+
+def test_hung_pipeline_releases_the_session(client, factory, monkeypatch):
+    monkeypatch.setattr(server, "CONFIG", replace(CONFIG, reply_timeout_ms=200))
+    stuck = threading.Event()
+    with client.websocket_connect("/ws") as ws:
+        start(ws)
+        factory.made[0].hang = stuck
+        ws.send_bytes(JPEG)
+        assert ws.receive_json() == {"type": "error", "message": server.STALLED_MESSAGE}
+        assert_closes(ws)
+    assert len(factory.made[0].closed) == 1
+
+    with client.websocket_connect("/ws") as ws:
+        start(ws)  # accepted while the old worker thread is still stuck
+        assert not stuck.is_set()
+    stuck.set()
+
+
+def real_connect(port):
+    return connect(f"ws://127.0.0.1:{port}/ws", origin=f"http://127.0.0.1:{port}", proxy=None)
+
+
+def real_start(ws):
+    ws.send(json.dumps({"type": "start", "debug": False}))
+    assert json.loads(ws.recv(timeout=5)) == {"type": "ready"}
+
+
+def wait_until(check, seconds):
+    deadline = time.monotonic() + seconds
+    while not check() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return check()
+
+
+# TestClient cancels the app when its block ends, so only a real server shows a real disconnect.
+def test_closed_socket_closes_the_session(real_port, factory):
+    with real_connect(real_port) as ws:
+        real_start(ws)
+    assert wait_until(lambda: factory.made[0].closed, 2)
+
+
+def test_closed_socket_releases_a_hung_session_before_the_timeout(real_port, factory, monkeypatch):
+    monkeypatch.setattr(
+        server, "CONFIG", replace(CONFIG, reply_timeout_ms=60000, frame_finish_grace_ms=50)
+    )
+    stuck = threading.Event()
+    with real_connect(real_port) as ws:
+        real_start(ws)
+        factory.made[0].hang = stuck
+        ws.send(JPEG)
+        assert factory.made[0].entered.wait(2)
+    assert wait_until(lambda: factory.made[0].closed, HANG_LIMIT_SEC / 2)
+
+    with real_connect(real_port) as ws:
+        real_start(ws)
+    assert not stuck.is_set()
+    stuck.set()
+
+
+def test_close_waits_for_a_frame_that_is_about_to_finish(real_port, factory):
+    finishing = threading.Event()
+    with real_connect(real_port) as ws:
+        real_start(ws)
+        factory.made[0].hang = finishing
+        ws.send(JPEG)
+        assert factory.made[0].entered.wait(2)
+    time.sleep(0.1)  # the server has seen the close by now, and the frame is still running
+    finishing.set()
+    assert wait_until(lambda: factory.made[0].closed, 2)
+    assert factory.made[0].order == ["frame", "close"]
+
+
+def test_snapshot_sent_during_a_frame_waits_for_it(client, factory):
+    finishing = threading.Event()
+    with client.websocket_connect("/ws") as ws:
+        start(ws)
+        factory.made[0].hang = finishing
+        ws.send_bytes(JPEG)
+        assert factory.made[0].entered.wait(2)
+        ws.send_json({"type": "snapshot"})
+        ws.send_json({"type": "settings", "delaySec": 7})
+        time.sleep(0.1)
+        assert factory.made[0].snapshots == []
+        finishing.set()
+        assert ws.receive_json()["type"] == "frame"
+        ws.send_bytes(JPEG)
+        assert ws.receive_json()["type"] == "frame"
+    assert len(factory.made[0].snapshots) == 1
+    assert not factory.made[0].overlapped
+    assert factory.made[0].frames[1][3] == 7
+
+
+def test_config_endpoint_matches_config(client):
+    response = client.get("/config")
+    assert response.status_code == 200
+    assert response.json() == {
+        "target_fps": CONFIG.target_fps,
+        "min_delay_sec": CONFIG.min_delay_sec,
+        "max_delay_sec": CONFIG.max_delay_sec,
+        "default_delay_sec": CONFIG.default_delay_sec,
+        "paused_note_ms": CONFIG.paused_note_ms,
+        "warning_hold_ms": CONFIG.warning_hold_ms,
+        "reply_timeout_ms": CONFIG.reply_timeout_ms,
+        "overlay_line_frac": CONFIG.overlay_line_frac,
+        "overlay_letter_frac": CONFIG.overlay_letter_frac,
+        "frame_width": CONFIG.frame_width,
+        "frame_height": CONFIG.frame_height,
+        "jpeg_quality": CONFIG.jpeg_quality,
+        "beep_hz": CONFIG.beep_hz,
+        "beep_on_ms": CONFIG.beep_on_ms,
+        "beep_off_ms": CONFIG.beep_off_ms,
+        "beep_peak_gain": CONFIG.beep_peak_gain,
+    }
+
+
+def test_page_has_no_copy_of_config_values():
+    source = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    code = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    code = re.sub(r"'[^'\n]*'|`[^`]*`", "", code)
+    code = re.sub(r"//.*", "", code)
+    numbers = set(re.findall(r"(?<![\w.])\d+(?:\.\d+)?", code))
+    # 0 and 1 are logic, 100 makes a percentage and 1000 is milliseconds in a second.
+    assert numbers <= {"0", "1", "100", "1000"}
+
+    page = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    delay_input = re.search(r'<input id="delay"[^>]*>', page).group()
+    assert not re.search(r"[ ](min|max|value)=", delay_input)
 
 
 class FakeModel:

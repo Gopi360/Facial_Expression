@@ -95,6 +95,11 @@ body {
   cursor: pointer;
 }
 
+.start:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .message {
   margin: 0;
   padding: 10px 14px;

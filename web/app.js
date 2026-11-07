@@ -1,26 +1,15 @@
 'use strict';
 
-// Page-only values. The server owns everything about detection, and clamps the delay itself.
-const BEEP_HZ = 880;
-const BEEP_ON_MS = 300;
-const BEEP_OFF_MS = 200;
-const BEEP_PEAK_GAIN = 0.3;
-const OVERLAY_LINE_FRAC = 0.003;
-const OVERLAY_LETTER_FRAC = 0.045;
 const BOX_COLOUR = '#22c55e';
 const ALERT_BOX_COLOUR = '#ef4444';
-const FRAME_WIDTH = 640;
-const FRAME_HEIGHT = 480;
-const JPEG_QUALITY = 0.8;
-const FRAME_GAP_MS = 1000 / 15;
-const WARNING_MS = 5000;
-const PAUSED_NOTE_MS = 3000;
 
 const LOADING_MESSAGE = 'Loading...';
 const SOUND_ERROR_MESSAGE = 'The alarm sound could not be started. Reload the page to try again.';
 const PAUSED_MESSAGE = 'Detection paused while this tab was hidden';
 const LOST_MESSAGE = 'Connection to the app was lost. Check it is running, then reload.';
 const BUSY_MESSAGE = 'The app is already open in another tab.';
+const STALLED_MESSAGE = 'The app stopped responding. Reload the page, and restart the app if this repeats.';
+const CONFIG_ERROR_MESSAGE = 'The app settings could not be loaded. Check it is running, then reload.';
 const OVERFLOW_MESSAGE = 'Showing the 4 largest faces';
 const CAPTURE_WARNING = 'Skipped a camera frame that could not be captured.';
 const REPLY_WARNING = 'The app sent a reply that could not be read.';
@@ -47,8 +36,8 @@ debugPanel.hidden = !debugOn;
 
 // Off-screen, so the frames sent to the server are the unflipped video.
 const capture = document.createElement('canvas');
-capture.width = FRAME_WIDTH;
-capture.height = FRAME_HEIGHT;
+
+let config = null; // every tunable number, from GET /config, loaded before Start is enabled
 
 class Beeper {
   constructor() {
@@ -66,7 +55,7 @@ class Beeper {
   setVolume(v) {
     this.volume = Math.min(1, Math.max(0, v));
     if (this.osc && this.timer !== null && this.gain.gain.value > 0) {
-      this.gain.gain.value = this.volume * BEEP_PEAK_GAIN;
+      this.gain.gain.value = this.volume * config.beep_peak_gain;
     }
   }
 
@@ -82,7 +71,7 @@ class Beeper {
       this.ctx.resume().catch(() => {});
       const osc = this.ctx.createOscillator();
       osc.type = 'sine';
-      osc.frequency.value = BEEP_HZ;
+      osc.frequency.value = config.beep_hz;
       osc.connect(this.gain);
       osc.start();
       this.osc = osc;
@@ -94,13 +83,13 @@ class Beeper {
   }
 
   beepOn() {
-    this.gain.gain.value = this.volume * BEEP_PEAK_GAIN;
-    this.timer = window.setTimeout(() => this.beepOff(), BEEP_ON_MS);
+    this.gain.gain.value = this.volume * config.beep_peak_gain;
+    this.timer = window.setTimeout(() => this.beepOff(), config.beep_on_ms);
   }
 
   beepOff() {
     this.gain.gain.value = 0;
-    this.timer = window.setTimeout(() => this.beepOn(), BEEP_OFF_MS);
+    this.timer = window.setTimeout(() => this.beepOn(), config.beep_off_ms);
   }
 
   stop() {
@@ -128,6 +117,7 @@ let running = false; // the camera is on and frames may be sent
 let sessionOver = false;
 let frameInFlight = false; // captured or sent, with no reply yet
 let frameTimer = null;
+let replyTimer = null; // the watchdog on the frame in flight
 let lastSentMs = -Infinity;
 let alarmOn = false;
 let muted = false;
@@ -180,8 +170,8 @@ function drawOverlay(people) {
   const { width, height } = overlay;
   ctx.clearRect(0, 0, width, height);
 
-  const lineWidth = height * OVERLAY_LINE_FRAC;
-  const letterSize = height * OVERLAY_LETTER_FRAC;
+  const lineWidth = height * config.overlay_line_frac;
+  const letterSize = height * config.overlay_letter_frac;
   ctx.lineWidth = lineWidth;
   ctx.font = `600 ${letterSize}px 'Segoe UI', system-ui, sans-serif`;
   ctx.textAlign = 'left';
@@ -248,7 +238,7 @@ function send(data) {
 
 function scheduleFrame() {
   if (!running || document.hidden || frameInFlight || frameTimer !== null) return;
-  const wait = Math.max(0, lastSentMs + FRAME_GAP_MS - performance.now());
+  const wait = Math.max(0, lastSentMs + 1000 / config.target_fps - performance.now());
   frameTimer = window.setTimeout(sendFrame, wait);
 }
 
@@ -262,19 +252,20 @@ function sendFrame() {
   }
   frameInFlight = true;
   try {
-    capture.getContext('2d').drawImage(video, 0, 0, FRAME_WIDTH, FRAME_HEIGHT);
-    capture.toBlob(onFrameCaptured, 'image/jpeg', JPEG_QUALITY);
+    capture.getContext('2d').drawImage(video, 0, 0, capture.width, capture.height);
+    capture.toBlob(onFrameCaptured, 'image/jpeg', config.jpeg_quality);
   } catch (err) {
     console.error('Frame capture failed', err);
-    showBriefly(CAPTURE_WARNING, WARNING_MS);
+    showBriefly(CAPTURE_WARNING, config.warning_hold_ms);
     frameInFlight = false;
     scheduleFrame();
   }
 }
 
 function onFrameCaptured(blob) {
-  if (blob && running && socket?.readyState === WebSocket.OPEN) {
+  if (blob && running && !document.hidden && socket?.readyState === WebSocket.OPEN) {
     socket.send(blob);
+    replyTimer = window.setTimeout(() => endSession(STALLED_MESSAGE), config.reply_timeout_ms);
     return;
   }
   frameInFlight = false;
@@ -284,13 +275,14 @@ function onFrameCaptured(blob) {
 function onFrameReply(reply) {
   lastError = null;
   if (!running) return;
+  // First, so a render error cannot leave the alarm stale.
+  alarmOn = reply.alarm;
+  updateSound();
   drawOverlay(reply.people);
   renderStrip(reply);
   renderLog(reply.log);
   if (debugOn) debug.textContent = (reply.debug ?? []).join('\n');
-  if (reply.warning) showBriefly(reply.warning, WARNING_MS);
-  alarmOn = reply.alarm;
-  updateSound();
+  if (reply.warning) showBriefly(reply.warning, config.warning_hold_ms);
 }
 
 function saveDebugLog(samples) {
@@ -320,6 +312,7 @@ function endSession(text) {
   running = false;
   window.clearTimeout(frameTimer);
   frameTimer = null;
+  window.clearTimeout(replyTimer);
   alarmOn = false;
   updateSound();
   stopCamera();
@@ -334,7 +327,7 @@ function endSession(text) {
 async function startCamera() {
   try {
     const opened = await navigator.mediaDevices.getUserMedia({
-      video: { width: FRAME_WIDTH, height: FRAME_HEIGHT },
+      video: { width: capture.width, height: capture.height },
       audio: false,
     });
     if (sessionOver) {
@@ -373,6 +366,7 @@ function onSocketMessage(event) {
         void startCamera();
         break;
       case 'frame':
+        window.clearTimeout(replyTimer);
         frameInFlight = false;
         onFrameReply(reply);
         scheduleFrame();
@@ -382,7 +376,7 @@ function onSocketMessage(event) {
         break;
       case 'error':
         lastError = reply.message;
-        showBriefly(reply.message, WARNING_MS);
+        showBriefly(reply.message, config.warning_hold_ms);
         break;
       case 'debug_dump':
         saveDebugLog(reply.samples);
@@ -392,8 +386,10 @@ function onSocketMessage(event) {
     }
   } catch (err) {
     console.error('Reply failed', err);
-    showBriefly(reply?.type === 'debug_dump' ? DEBUG_LOG_ERROR_MESSAGE : REPLY_WARNING, WARNING_MS);
+    const text = reply?.type === 'debug_dump' ? DEBUG_LOG_ERROR_MESSAGE : REPLY_WARNING;
+    showBriefly(text, config.warning_hold_ms);
     if (reply?.type !== 'debug_dump') {
+      window.clearTimeout(replyTimer);
       frameInFlight = false; // the only reply that releases the next frame may be this one
       scheduleFrame();
     }
@@ -440,7 +436,7 @@ function onVisibilityChange() {
     return;
   }
   if (!running) return;
-  showBriefly(PAUSED_MESSAGE, PAUSED_NOTE_MS);
+  showBriefly(PAUSED_MESSAGE, config.paused_note_ms);
   scheduleFrame();
 }
 
@@ -467,5 +463,24 @@ delaySlider.addEventListener('input', () => {
 snapshotButton.addEventListener('click', () => send({ type: 'snapshot' }));
 debugDownloadButton.addEventListener('click', () => send({ type: 'debug_dump' }));
 
+async function loadConfig() {
+  try {
+    const response = await fetch('config');
+    if (!response.ok) throw new Error(`GET /config gave ${response.status}`);
+    config = await response.json();
+  } catch (err) {
+    console.error('Settings failed to load', err);
+    showMessage(CONFIG_ERROR_MESSAGE);
+    return;
+  }
+  capture.width = config.frame_width;
+  capture.height = config.frame_height;
+  delaySlider.min = String(config.min_delay_sec);
+  delaySlider.max = String(config.max_delay_sec);
+  delaySlider.value = String(config.default_delay_sec);
+  showDelay();
+  startButton.disabled = false;
+}
+
 showVolume();
-showDelay();
+void loadConfig();
