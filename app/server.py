@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
 
+POLICY_VIOLATION = 1008  # WebSocket close code
+
 BAD_MESSAGE = "The app did not understand that message."
 BAD_DELAY = "The delay setting must be a number."
 NOT_STARTED = "The session has not started yet."
@@ -53,6 +55,15 @@ def make_pipeline(debug: bool) -> Pipeline:
 def _is_number(value: object) -> bool:
     is_numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
     return is_numeric and value == value  # NaN is the one number not equal to itself
+
+
+def _origin_allowed(socket: WebSocket) -> bool:
+    """Only this app's own page. Browsers always send Origin, so no header means no browser."""
+    origin = socket.headers.get("origin")
+    if origin is None:
+        return True
+    port = socket.scope["server"][1]  # the port really bound, which a request cannot fake
+    return origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
 
 
 class _Session:
@@ -163,6 +174,10 @@ def create_app(make: Callable[[bool], Pipeline]) -> FastAPI:
     @app.websocket("/ws")
     async def session(socket: WebSocket) -> None:
         nonlocal session_open
+        if not _origin_allowed(socket):
+            logger.warning("Refused a connection from origin %s", socket.headers.get("origin"))
+            await socket.close(code=POLICY_VIOLATION)
+            return
         await socket.accept()
         if session_open:
             with suppress(WebSocketDisconnect, RuntimeError):

@@ -1,8 +1,15 @@
+import json
+import socket
+import threading
+import time
 from datetime import datetime
 
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
+from websockets.exceptions import InvalidStatus
+from websockets.sync.client import connect
 
 import app.server as server
 from app.core.config import CONFIG
@@ -11,6 +18,7 @@ from app.pipeline import FrameResult
 from app.server import create_app
 
 JPEG = b"\xff\xd8 pretend jpeg"
+SERVED_URL = "ws://127.0.0.1:8000/ws"
 
 
 class FakePipeline:
@@ -272,6 +280,84 @@ def test_failing_close_still_frees_the_app_for_the_next_client(client, factory):
 
     with client.websocket_connect("/ws") as ws:
         start(ws)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://evil.example",
+        "http://evil.example:8000",
+        "http://127.0.0.1:9999",
+        "http://localhost:9999",
+        "https://127.0.0.1:8000",
+        "http://127.0.0.1:8000.evil.example",
+        "null",
+        "",
+    ],
+)
+def test_foreign_origin_is_rejected(client, factory, origin):
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(SERVED_URL, headers={"origin": origin}):
+            pass
+    assert factory.made == []
+
+
+@pytest.mark.parametrize("origin", ["http://127.0.0.1:8000", "http://localhost:8000"])
+def test_own_origin_is_accepted(client, origin):
+    with client.websocket_connect(SERVED_URL, headers={"origin": origin}) as ws:
+        start(ws)
+
+
+def test_rejected_origin_does_not_take_the_session(client, factory):
+    foreign = {"origin": "http://evil.example"}
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(SERVED_URL, headers=foreign):
+            pass
+
+    with client.websocket_connect(SERVED_URL) as ws:
+        start(ws)  # the rejected client left no session behind
+        with pytest.raises(WebSocketDisconnect):  # refused outright, not told busy
+            with client.websocket_connect(SERVED_URL, headers=foreign):
+                pass
+        ws.send_bytes(JPEG)
+        assert ws.receive_json()["type"] == "frame"
+    assert len(factory.made) == 1
+    assert len(factory.made[0].closed) == 1
+
+
+@pytest.fixture
+def real_port(factory):
+    """A real uvicorn, the way the app is run. TestClient never needs a WebSocket library."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    uvicorn_server = uvicorn.Server(uvicorn.Config(create_app(factory), log_config=None))
+    thread = threading.Thread(target=uvicorn_server.run, args=([sock],), daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not uvicorn_server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert uvicorn_server.started
+    yield sock.getsockname()[1]
+    uvicorn_server.should_exit = True
+    thread.join(10)
+    sock.close()
+
+
+def test_real_server_runs_a_session_over_a_real_websocket(real_port, factory):
+    origin = f"http://127.0.0.1:{real_port}"
+    with connect(f"ws://127.0.0.1:{real_port}/ws", origin=origin, proxy=None) as ws:
+        ws.send(json.dumps({"type": "start", "debug": False}))
+        assert json.loads(ws.recv(timeout=5)) == {"type": "ready"}
+        ws.send(JPEG)
+        assert json.loads(ws.recv(timeout=5))["type"] == "frame"
+    assert factory.made[0].frames[0][0] == JPEG
+
+
+def test_real_server_refuses_a_foreign_origin(real_port, factory):
+    with pytest.raises(InvalidStatus) as refused:
+        connect(f"ws://127.0.0.1:{real_port}/ws", origin="http://evil.example", proxy=None)
+    assert refused.value.response.status_code == 403
+    assert factory.made == []
 
 
 class FakeModel:
