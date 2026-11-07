@@ -1,0 +1,364 @@
+"""Joins the models and the rules: one JPEG in, one result out."""
+from __future__ import annotations
+
+import logging
+import math
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
+
+import cv2
+import numpy as np
+
+from .core.classifier import PersonClassifier
+from .core.config import CONFIG
+from .core.debug_log import WATCHED, DebugBuffer
+from .core.events import diff_events, is_red, should_sound
+from .core.identity import UNKNOWN, Identity
+from .core.signals import Baseline
+from .core.snap_policy import SnapPolicy
+from .core.text import face_count_text, person_line
+from .core.tracker import Tracker
+from .core.types import Box, LogEvent, Person, RawFace, Reading, Signals
+from .session_files import SessionFiles, format_line, render_snap
+
+logger = logging.getLogger(__name__)
+
+EMPTY_FRAME_WARNING = "Skipped an empty camera frame."
+LARGE_FRAME_WARNING = "Skipped a camera frame that was too large."
+BAD_FRAME_WARNING = "Skipped a camera frame that could not be read."
+DETECT_WARNING = "Face detection stopped working. Reload the page to try again."
+FACE_WARNING = "One face could not be read on this frame."
+NO_FRAME_WARNING = "There is no camera frame to save yet."
+SNAP_WARNING = "Could not save the snap"
+
+WAITING_READING = Reading("neutral", 0)  # shown for a face with no letter, never classified
+MANUAL_LETTER = "all"
+MANUAL_REASON = "manual"
+
+
+@dataclass
+class FrameResult:
+    count_text: str
+    lines: list[str]
+    people: list[dict]
+    log: list[str]  # the same lines as the session file, newest first
+    alarm: bool
+    warning: str | None
+    overflow: bool
+    debug: list[str] | None
+
+
+@dataclass
+class _PersonState:
+    """What is remembered for one person, for the whole session."""
+
+    baseline: Baseline = field(default_factory=Baseline)
+    classifier: PersonClassifier = field(default_factory=PersonClassifier)
+    emotion: dict[str, float] | None = None
+    emotion_tried_ms: float = -math.inf
+    box: Box | None = None
+    reading: Reading | None = None
+
+
+def _decode(jpeg: bytes) -> tuple[np.ndarray | None, str | None]:
+    if not jpeg:
+        return None, EMPTY_FRAME_WARNING
+    if len(jpeg) > CONFIG.jpeg_max_bytes:
+        return None, LARGE_FRAME_WARNING
+    try:
+        frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    except cv2.error:
+        frame = None
+    return (frame, None) if frame is not None else (None, BAD_FRAME_WARNING)
+
+
+def _shown_letter(key: str) -> str:
+    """A state key past Z carries its track id. People only ever see the ?."""
+    return UNKNOWN if key.startswith(UNKNOWN) else key
+
+
+def _shown_event(event: LogEvent) -> LogEvent:
+    if event.who.startswith(f"Person {UNKNOWN}"):
+        return replace(event, who=f"Person {UNKNOWN}")
+    return event
+
+
+def _person_dict(p: Person) -> dict:
+    red = is_red(p.reading.label)
+    return {
+        "letter": p.letter,
+        "box": asdict(p.box),
+        "label": p.reading.label,
+        "confidence": p.reading.confidence,
+        "red": red,
+        "reason": person_line(p) if red else None,
+        "visible": p.visible,
+    }
+
+
+def _drowsy_text(info: dict) -> str:
+    if info["strong_sustained"]:
+        return "strong expression blocking"
+    sign = f"sign {info['drowsy_sign']}" if info["drowsy_sign"] else "no sign"
+    return f"{sign}, strong expression delays sleeping" if info["strong_held"] else sign
+
+
+def _debug_lines(letter: str, signals: Signals, ranges: dict | None, info: dict) -> list[str]:
+    live = "  ".join(f"{name} {value:.2f}" for name, value in asdict(signals).items())
+    lines = [f"{letter}: {live}"]
+    if ranges:
+        parts = "  ".join(
+            f"{name} {ranges[name]['min']:.2f} to {ranges[name]['max']:.2f}" for name in WATCHED
+        )
+        lines.append(f"{letter} last {CONFIG.debug_range_ms // 1000}s: {parts}")
+    lines.append(f"{letter} drowsy: {_drowsy_text(info)}")
+    return lines
+
+
+class Pipeline:
+    def __init__(self, finder, emotion, signer, files: SessionFiles, debug: bool = False):
+        self._finder = finder
+        self._emotion = emotion
+        self._signer = signer
+        self._files = files
+        self._debug_on = debug
+        self._tracker = Tracker()
+        self._identity = Identity()
+        self._snaps = SnapPolicy()
+        self._debug_buffer = DebugBuffer()
+        self._people: dict[str, _PersonState] = {}  # by state key, never deleted
+        self._signature_failed_ms: dict[int, float] = {}
+        self._labels: dict[str, str] = {}
+        self._alarm = False
+        self._log: list[str] = []
+        self._frame: np.ndarray | None = None
+        self._shown: list[Person] = []
+        self._pending_warnings = self._record(
+            [LogEvent(files.started, "System", "session started")]
+        )
+        self._last = FrameResult(
+            face_count_text(0), [], [], list(self._log), False, None, False, [] if debug else None
+        )
+
+    def process(self, jpeg: bytes, now_ms: float, at: datetime, delay_sec: float) -> FrameResult:
+        frame, problem = _decode(jpeg)
+        if frame is None:
+            return replace(self._last, warning=problem)
+
+        warnings, self._pending_warnings = self._pending_warnings, []
+        faces = self._find(frame, warnings)
+        tracked = dict(self._tracker.update(faces, now_ms))
+        active_ids = self._tracker.active_ids()
+        self._identity.sync(set(tracked), active_ids, now_ms)
+        self._heavy_check(frame, tracked, now_ms, warnings)
+
+        debug: list[str] = []
+        present = self._read_people(tracked, active_ids, now_ms, delay_sec, debug)
+        waiting = [
+            Person(None, face.box, WAITING_READING, True)
+            for track_id, face in tracked.items()
+            if self._identity.state_key(track_id) is None
+        ]
+        people = [*present.values(), *waiting]
+
+        events = self._events(frame, present, people, now_ms, at, warnings)
+        warnings += self._record(events)
+
+        self._frame = frame
+        self._shown = people
+        self._last = FrameResult(
+            count_text=face_count_text(len(people)),
+            lines=[person_line(p) for p in people],
+            people=[_person_dict(p) for p in people],
+            log=list(self._log),
+            alarm=self._alarm,
+            warning=" ".join(dict.fromkeys(warnings)) or None,
+            overflow=len(faces) > CONFIG.max_faces,
+            debug=debug if self._debug_on else None,
+        )
+        return self._last
+
+    def snapshot(self, at: datetime) -> str | None:
+        """Save the last frame as the screen showed it. Returns a warning, or None."""
+        if self._frame is None:
+            return NO_FRAME_WARNING
+        path, warning = self._save_snap(self._frame, self._shown, at, MANUAL_LETTER, MANUAL_REASON)
+        event = (
+            LogEvent(at, "System", "snap failed")
+            if warning
+            else LogEvent(at, "System", "manual snapshot", snap=path)
+        )
+        write_warnings = self._record([event])
+        return warning or (write_warnings[0] if write_warnings else None)
+
+    def debug_samples(self) -> list[dict]:
+        return self._debug_buffer.samples()
+
+    def close(self, at: datetime) -> None:
+        self._files.close(at)
+
+    def _find(self, frame: np.ndarray, warnings: list[str]) -> list[RawFace]:
+        try:
+            return self._finder.find(frame)
+        except Exception:
+            # Carry on with no faces, so people leave after their grace and the alarm cannot stick.
+            logger.exception("Face detection failed")
+            warnings.append(DETECT_WARNING)
+            return []
+
+    def _heavy_check(
+        self, frame: np.ndarray, tracked: dict[int, RawFace], now_ms: float, warnings: list[str]
+    ) -> None:
+        """At most one signature or emotion call, which keeps the frame cost bounded."""
+        for track_id, face in tracked.items():
+            if self._wants_signature(track_id, now_ms):
+                self._sign(frame, track_id, face, now_ms, warnings)
+                return
+
+        due = []
+        for track_id, face in tracked.items():
+            key = self._identity.state_key(track_id)
+            if key is None:
+                continue
+            state = self._people.setdefault(key, _PersonState())
+            if now_ms - state.emotion_tried_ms >= CONFIG.emotion_interval_ms:
+                due.append((state, face))
+        if due:
+            state, face = min(due, key=lambda pair: pair[0].emotion_tried_ms)
+            self._read_emotion(frame, state, face, now_ms, warnings)
+
+    def _wants_signature(self, track_id: int, now_ms: float) -> bool:
+        """A face that just failed waits its turn, or it would block everyone behind it."""
+        failed_ms = self._signature_failed_ms.get(track_id, -math.inf)
+        return (
+            self._identity.needs_signature(track_id, now_ms)
+            and now_ms - failed_ms >= CONFIG.identity_interval_ms
+        )
+
+    def _sign(
+        self,
+        frame: np.ndarray,
+        track_id: int,
+        face: RawFace,
+        now_ms: float,
+        warnings: list[str],
+    ) -> None:
+        try:
+            signature = self._signer.signature(frame, face)
+        except Exception:
+            logger.exception("Face signature failed")
+            self._signature_failed_ms[track_id] = now_ms
+            warnings.append(FACE_WARNING)
+            return
+        frontal = abs(face.yaw_deg) <= CONFIG.frontal_yaw_deg
+        self._identity.add_signature(track_id, signature, frontal, now_ms)
+
+    def _read_emotion(
+        self,
+        frame: np.ndarray,
+        state: _PersonState,
+        face: RawFace,
+        now_ms: float,
+        warnings: list[str],
+    ) -> None:
+        state.emotion_tried_ms = now_ms  # set first, so a failure does not stay most overdue
+        try:
+            state.emotion = self._emotion.scores(frame, face.box)
+        except Exception:
+            logger.exception("Emotion scoring failed")
+            warnings.append(FACE_WARNING)
+
+    def _read_people(
+        self,
+        tracked: dict[int, RawFace],
+        active_ids: set[int],
+        now_ms: float,
+        delay_sec: float,
+        debug: list[str],
+    ) -> dict[str, Person]:
+        """Everyone with a letter and an active track, by state key, in panel order."""
+        present: dict[str, Person] = {}
+        for track_id in sorted(active_ids):
+            key = self._identity.state_key(track_id)
+            if key is None:
+                continue
+            state = self._people.setdefault(key, _PersonState())
+            face = tracked.get(track_id)
+            if face is not None:
+                signals = state.baseline.to_signals(face, now_ms)
+                state.reading = state.classifier.update(signals, now_ms, delay_sec, state.emotion)
+                state.box = face.box
+                if self._debug_on:
+                    debug += self._debug_sample(key, signals, state, now_ms)
+            if state.reading is not None and state.box is not None:
+                present[key] = Person(
+                    _shown_letter(key), state.box, state.reading, face is not None
+                )
+        order = sorted(present, key=lambda key: (key.startswith(UNKNOWN), key))
+        return {key: present[key] for key in order}
+
+    def _debug_sample(
+        self, key: str, signals: Signals, state: _PersonState, now_ms: float
+    ) -> list[str]:
+        info = state.classifier.debug_info()
+        self._debug_buffer.add(
+            {
+                "t_ms": now_ms,
+                "letter": key,
+                "signals": asdict(signals),
+                "label": state.reading.label,
+                "confidence": state.reading.confidence,
+                **info,
+            }
+        )
+        return _debug_lines(key, signals, self._debug_buffer.recent_ranges(key, now_ms), info)
+
+    def _events(
+        self,
+        frame: np.ndarray,
+        present: dict[str, Person],
+        people: list[Person],
+        now_ms: float,
+        at: datetime,
+        warnings: list[str],
+    ) -> list[LogEvent]:
+        readings = {key: p.reading for key, p in present.items()}
+        events = [_shown_event(e) for e in diff_events(self._labels, readings, at)]
+        for key in self._labels:
+            if key not in present:
+                self._snaps.drop(key)
+        self._labels = {key: r.label for key, r in readings.items()}
+
+        alarm = should_sound(self._labels.values())
+        if alarm != self._alarm:
+            events.append(LogEvent(at, "System", "alarm started" if alarm else "alarm stopped"))
+        self._alarm = alarm
+
+        for key, person in present.items():
+            label = person.reading.label
+            if not self._snaps.update(key, is_red(label), now_ms):
+                continue
+            who = f"Person {person.letter}"
+            path, warning = self._save_snap(frame, people, at, person.letter, label)
+            if warning:
+                warnings.append(warning)
+                events.append(LogEvent(at, who, "snap failed"))
+            else:
+                events.append(LogEvent(at, who, label, person.reading.confidence, path))
+        return events
+
+    def _save_snap(
+        self, frame: np.ndarray, people: list[Person], at: datetime, letter: str, reason: str
+    ) -> tuple[str | None, str | None]:
+        try:
+            return self._files.save_snap(render_snap(frame, people), at, letter, reason)
+        except Exception as e:
+            logger.exception("Snap failed")
+            return None, f"{SNAP_WARNING}: {e}"
+
+    def _record(self, events: list[LogEvent]) -> list[str]:
+        """Write events to the file and the panel log. Returns any warnings."""
+        written = [self._files.write(event) for event in events]
+        lines = [format_line(event) for event in reversed(events)]
+        self._log = [*lines, *self._log][: CONFIG.log_cap]
+        return [warning for warning in written if warning]
