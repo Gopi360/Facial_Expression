@@ -63,6 +63,7 @@ class Config:
     frontal_yaw_deg: float = 20
     frontal_pitch_delta_deg: float = 12  # the gate for storing a view
     identity_check_pitch_delta_deg: float = 30  # looser, for checking a letter: must be under this
+    identity_check_fail_at: float = 0.2  # a non-frontal check only fails clearly different faces
     min_red_ms: int = 1000
     jpeg_max_bytes: int = 2000000
     overlay_line_frac: float = 0.003

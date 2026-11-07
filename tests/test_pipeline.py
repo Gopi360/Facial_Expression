@@ -336,6 +336,43 @@ def test_a_tilted_view_is_checked_but_never_stored(rig):
     assert [p["letter"] for p in rig.result.people] == ["A"]
 
 
+@pytest.mark.parametrize("pitch", [14, 20])
+def test_a_tilted_view_with_a_middling_score_keeps_the_letter(rig, pitch):
+    score = (CONFIG.identity_check_fail_at + CONFIG.identity_match_at) / 2
+    middling = score * vector_of(1) + np.sqrt(1 - score**2) * vector_of(9)
+    rig.run(5000, face(1))
+    rig.run(6000, face(1, pitch=pitch, signature=middling))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
+@pytest.mark.parametrize("pitch", [14, 20])
+def test_a_tilted_view_of_a_clearly_different_face_still_loses_the_letter(rig, pitch):
+    rig.run(5000, face(1))
+    rig.run(3000, face(2, pitch=pitch))
+    assert [p["letter"] for p in rig.result.people] == ["B"]
+
+
+def test_a_droopy_view_just_past_the_store_pitch_is_not_a_check(rig):
+    rig.run(5000, face(1))
+    rig.run(6000, face(1, pitch=14, blink=0.25, signature=vector_of(9)))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
+def test_a_doze_does_not_join_failed_checks_either_side_of_it_into_two_in_a_row(rig):
+    rig.run(5000, face(1))
+    failing = face(1, signature=vector_of(9))
+    tracks = rig.pipe._identity._tracks.values()
+    rig.finder.faces = [failing]
+    while not any(t.mismatches for t in tracks):
+        rig.frame()
+    rig.run(10000, face(1, closed=True, signature=vector_of(9)))
+    assert not any(t.mismatches for t in tracks)
+    rig.finder.faces = [failing]
+    while not any(t.mismatches for t in tracks):
+        rig.frame()
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
 def test_eyes_closed_doze_inside_the_check_pitch_keeps_the_letter(rig):
     rig.run(5000, face(1))
     rig.run(5000, face(1, pitch=20, closed=True, signature=vector_of(9)))

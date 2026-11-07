@@ -159,6 +159,12 @@ class Identity:
             anchor_score,
         )
 
+    def clear_mismatches(self, track_id: int) -> None:
+        """For when eyes close: failed checks either side of a doze are not two in a row."""
+        track = self._tracks.get(track_id)
+        if track is not None:
+            track.mismatches = 0
+
     # -- helpers ---------------------------------------------------------
     def _place(
         self,
@@ -204,9 +210,10 @@ class Identity:
                 self._learn(other[0], sig)
             return "matched"
         if checkable and store is not None:
-            if _best_cosine(sig, store.anchors) >= CONFIG.identity_match_at:
+            score = _best_cosine(sig, store.anchors)
+            if score >= CONFIG.identity_match_at:
                 track.mismatches = 0
-            else:
+            elif frontal or score < CONFIG.identity_check_fail_at:
                 track.mismatches += 1
                 if track.mismatches < CONFIG.identity_mismatch_checks:
                     return "mismatch"

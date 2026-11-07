@@ -417,6 +417,8 @@ class Pipeline:
                 state.box = face.box
             elif face is not None:
                 signals = state.baseline.to_signals(face, now_ms)
+                if signals.eye_closure >= CONFIG.eyes_closed_at:
+                    self._identity.clear_mismatches(track_id)
                 state.reading = state.classifier.update(signals, now_ms, delay_sec, state.emotion)
                 state.box = face.box
                 if self._debug_on:

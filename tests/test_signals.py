@@ -255,8 +255,8 @@ def test_a_check_view_needs_open_eyes_and_limits_yaw():
 def test_a_nod_is_not_a_check_view_though_a_level_look_with_heavy_eyes_is():
     baseline = settled_baseline(pitch_deg=0)
     heavy = 0.1 + 0.9 * CONFIG.head_droop_eyes_at + 0.01
-    assert not baseline.is_checkable(face(heavy, CONFIG.head_droop_deg))
-    assert baseline.is_checkable(face(heavy, CONFIG.head_droop_deg - 1))
+    assert not baseline.is_checkable(face(heavy, CONFIG.frontal_pitch_delta_deg + 1))
+    assert baseline.is_checkable(face(heavy, CONFIG.frontal_pitch_delta_deg))
     assert baseline.is_checkable(face(0.1, CONFIG.head_droop_deg))
 
 

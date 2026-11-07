@@ -460,6 +460,43 @@ def test_a_side_view_cannot_take_a_letter_from_a_failing_track():
     assert ident.letter_for(2) is None
 
 
+def mid_score() -> np.ndarray:
+    """Between identity_check_fail_at and identity_match_at against vec(0)."""
+    score = (CONFIG.identity_check_fail_at + CONFIG.identity_match_at) / 2
+    return score * vec(0) + np.sqrt(1 - score**2) * vec(1)
+
+
+def test_a_mid_score_on_a_non_frontal_check_is_not_a_failure():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    for t in (1000, 2000, 3000):
+        assert ident.add_signature(1, mid_score(), False, t, checkable=True).outcome == "kept"
+    assert ident.letter_for(1) == "A"
+
+
+def test_a_mid_score_on_a_frontal_check_is_still_a_failure():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    assert ident.add_signature(1, mid_score(), True, 1000).outcome == "mismatch"
+
+
+def test_a_mid_score_neither_adds_to_nor_clears_a_failed_check():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.add_signature(1, vec(1), True, 1000)
+    ident.add_signature(1, mid_score(), False, 2000, checkable=True)
+    assert ident.add_signature(1, vec(1), True, 3000).outcome.startswith("stripped")
+
+
+def test_clearing_failed_checks_means_two_in_a_row_starts_again():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.add_signature(1, vec(1), True, 1000)
+    ident.clear_mismatches(1)
+    assert ident.add_signature(1, vec(1), True, 2000).outcome == "mismatch"
+    assert ident.letter_for(1) == "A"
+
+
 # -- a far track holds its letter loosely --------------------------------
 
 
