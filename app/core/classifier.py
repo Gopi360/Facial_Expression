@@ -38,6 +38,16 @@ def _is_yawn(s: Signals) -> bool:
     return s.jaw_open >= CONFIG.yawn_jaw_at and s.smile < CONFIG.smile_at
 
 
+# Start times of everything that needs an unbroken stretch of watching.
+_RUNNING_HOLDS = (
+    "closed_since_ms",
+    "closed_run_since_ms",
+    "droopy_since_ms",
+    "head_droop_since_ms",
+    "yawn_since_ms",
+)
+
+
 @dataclass
 class _State:
     last_update_ms: float | None = None
@@ -77,12 +87,15 @@ class PersonClassifier:
     def update(
         self, s: Signals, now_ms: float, delay_sec: float, emotion: dict[str, float] | None
     ) -> Reading:
+        delay_ms = delay_sec * MS_PER_SEC
         last_update_ms = self._state.last_update_ms
-        if last_update_ms is not None and now_ms - last_update_ms > CONFIG.frame_gap_reset_ms:
+        gap_ms = now_ms - last_update_ms if last_update_ms is not None else 0
+        if gap_ms > CONFIG.frame_gap_reset_ms:
             self._state = _State()
+        elif gap_ms > CONFIG.open_grace_ms:
+            self._skip_gap(s, gap_ms, now_ms, delay_ms)
         self._state.last_update_ms = now_ms
 
-        delay_ms = delay_sec * MS_PER_SEC
         is_strong = _is_strong_expression(s, emotion)
         strong = self._held_strong(is_strong, now_ms)
         sustained = self._sustained_strong(is_strong, now_ms, strong)
@@ -95,6 +108,19 @@ class PersonClassifier:
             "strong_sustained": sustained,
         }
         return self._display(s, self._candidate(s, now_ms, delay_ms, strong, emotion), now_ms)
+
+    def _skip_gap(self, s: Signals, gap_ms: float, now_ms: float, delay_ms: float) -> None:
+        """Nobody saw this time, so no hold counts it. Whatever was counted before it stands,
+        unless the eyes came back open, which ends the closure there and then.
+        """
+        st = self._state
+        for name in _RUNNING_HOLDS:
+            since_ms = getattr(st, name)
+            if since_ms is not None:
+                setattr(st, name, since_ms + gap_ms)
+        st.last_closed_ms += gap_ms
+        if st.closed_since_ms is not None and not _is_eyes_closed(s):
+            self._end_closure(now_ms, delay_ms)
 
     def _held_strong(self, is_strong: bool, now_ms: float) -> bool:
         """A strong expression counts as present until it has been absent for label_hold_ms."""
@@ -149,8 +175,12 @@ class PersonClassifier:
         if now_ms - st.open_since_ms < CONFIG.open_grace_ms:
             return
 
+        self._end_closure(now_ms, delay_ms)
+
+    def _end_closure(self, now_ms: float, delay_ms: float) -> None:
         # The grace bridges the sleep count, but two quick blinks it joins are not
         # one slow blink, so a slow blink needs one unbroken run of that length.
+        st = self._state
         counted_ms = st.last_closed_ms - st.closed_since_ms
         if st.longest_closed_run_ms >= CONFIG.slow_blink_ms and counted_ms < delay_ms:
             st.slow_blink_ends_ms.append(now_ms)

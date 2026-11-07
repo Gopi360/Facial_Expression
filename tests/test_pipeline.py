@@ -405,6 +405,19 @@ def test_returning_still_red_snaps_once_after_a_visible_second(rig):
     assert len(rig.snaps()) == 1
 
 
+def test_time_with_no_face_is_not_closed_eye_time(rig):
+    """Eyes closed 1.5s, face lost 1.8s, back with eyes open."""
+    rig.run(4000, face(1))
+    rig.run(1500, face(1, closed=True), delay=3)
+    rig.run(1800, delay=3)
+    rig.finder.faces = [face(1)]
+    for _ in range(15):
+        assert not rig.frame(delay=3).alarm
+        assert rig.result.people[0]["label"] != "sleeping"
+    assert "fell asleep" not in rig.log_text()
+    assert rig.snaps() == []
+
+
 def test_alarm_start_and_stop_are_logged(rig):
     rig.go_red()
     rig.run(3000, face(1))

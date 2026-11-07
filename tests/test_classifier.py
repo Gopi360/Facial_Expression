@@ -9,6 +9,7 @@ from dataclasses import replace
 import pytest
 
 from app.core.classifier import PersonClassifier
+from app.core.config import CONFIG
 from app.core.expressions import EMOTIONS
 from app.core.types import Reading, Signals
 
@@ -192,10 +193,62 @@ def test_a_5_second_frame_gap_does_not_count_as_closed_time():
 
 
 def test_a_face_lost_for_1_5_seconds_keeps_its_closed_count():
+    """The 2 seconds before the gap persist, and the gap itself adds nothing."""
     classifier = PersonClassifier()
     run(classifier, CLOSED, 0, 2000)
 
-    assert classifier.update(CLOSED, 3500, 3, None).label == "sleeping"
+    assert classifier.update(CLOSED, 3500, 3, None).label != "sleeping"
+    assert run(classifier, CLOSED, 3566, 4400).label != "sleeping"
+    assert run(classifier, CLOSED, 4400, 4500).label == "sleeping"
+
+
+def test_a_gap_then_open_eyes_ends_the_closure_without_sleeping():
+    classifier = PersonClassifier()
+    run(classifier, CLOSED, 0, 1500)
+
+    labels = labels_shown(classifier, lambda t: OPEN, 3300, 5000)
+    assert "sleeping" not in labels
+    assert "drowsy" not in labels
+
+
+def test_a_gap_just_before_the_delay_then_open_eyes_never_shows_sleeping():
+    classifier = PersonClassifier()
+    run(classifier, CLOSED, 0, 2950)
+
+    assert "sleeping" not in labels_shown(classifier, lambda t: OPEN, 4000, 4500)
+
+
+def test_closed_time_does_not_carry_over_a_closure_a_gap_ended():
+    classifier = PersonClassifier()
+    run(classifier, CLOSED, 0, 2500)
+    classifier.update(OPEN, 3000, 3, None)
+
+    assert run(classifier, CLOSED, 3066, 5900).label != "sleeping"
+
+
+def test_a_frame_gap_within_the_open_grace_still_counts():
+    classifier = PersonClassifier()
+    run(classifier, CLOSED, 0, 2800)
+    reading = classifier.update(CLOSED, 2800 + CONFIG.open_grace_ms, 3, None)
+
+    assert reading.label == "sleeping"
+
+
+def test_a_gap_does_not_count_towards_the_droopy_hold():
+    classifier = PersonClassifier()
+    run(classifier, DROOPY, 0, 2000)
+    labels = labels_shown(classifier, lambda t: DROOPY, 4000, 4900)
+
+    assert "drowsy" not in labels
+
+
+def test_a_gap_does_not_count_towards_the_head_droop_hold():
+    classifier = PersonClassifier()
+    drooped = replace(OPEN, pitch_delta=CONFIG.head_droop_deg, eye_closure=0.5)
+    run(classifier, drooped, 0, 1000)
+    labels = labels_shown(classifier, lambda t: drooped, 2400, 2800)
+
+    assert "drowsy" not in labels
 
 
 # Drowsy
