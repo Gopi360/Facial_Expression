@@ -228,3 +228,46 @@ def test_judging_a_view_does_not_feed_the_baseline():
     for t in range(20):
         baseline.is_frontal(face(0.1, 40))
     assert baseline.normal() is None
+
+
+def test_a_check_view_allows_more_pitch_than_a_frontal_view():
+    baseline = settled_baseline(pitch_deg=10)
+    tilted = face(0.1, 10 + CONFIG.frontal_pitch_delta_deg + 5)
+    assert not baseline.is_frontal(tilted)
+    assert baseline.is_checkable(tilted)
+    assert baseline.is_checkable(face(0.1, 10 - CONFIG.identity_check_pitch_delta_deg + 1))
+
+
+def test_a_check_view_stops_short_of_the_check_pitch_limit():
+    baseline = settled_baseline(pitch_deg=0)
+    assert baseline.is_checkable(face(0.1, CONFIG.identity_check_pitch_delta_deg - 1))
+    assert not baseline.is_checkable(face(0.1, CONFIG.identity_check_pitch_delta_deg))
+    assert not baseline.is_checkable(face(0.1, -CONFIG.identity_check_pitch_delta_deg))
+
+
+def test_a_check_view_needs_open_eyes_and_limits_yaw():
+    baseline = settled_baseline(pitch_deg=0)
+    assert not baseline.is_checkable(face(0.9))
+    assert baseline.is_checkable(turned_face(0.1, 0, CONFIG.frontal_yaw_deg))
+    assert not baseline.is_checkable(turned_face(0.1, 0, CONFIG.frontal_yaw_deg + 1))
+
+
+def test_a_nod_is_not_a_check_view_though_a_level_look_with_heavy_eyes_is():
+    baseline = settled_baseline(pitch_deg=0)
+    heavy = 0.1 + 0.9 * CONFIG.head_droop_eyes_at + 0.01
+    assert not baseline.is_checkable(face(heavy, CONFIG.head_droop_deg))
+    assert baseline.is_checkable(face(heavy, CONFIG.head_droop_deg - 1))
+    assert baseline.is_checkable(face(0.1, CONFIG.head_droop_deg))
+
+
+def test_every_frontal_view_can_be_checked():
+    baseline = settled_baseline(pitch_deg=0)
+    for pitch_deg in (-CONFIG.frontal_pitch_delta_deg, 0, CONFIG.frontal_pitch_delta_deg):
+        assert baseline.is_frontal(face(0.1, pitch_deg))
+        assert baseline.is_checkable(face(0.1, pitch_deg))
+
+
+def test_a_check_view_with_no_baseline_judges_eyes_and_yaw_only():
+    baseline = Baseline()
+    assert baseline.is_checkable(face(0.1, 40))
+    assert not baseline.is_checkable(face(0.9, 0))

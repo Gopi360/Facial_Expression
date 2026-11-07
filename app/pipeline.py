@@ -300,8 +300,9 @@ class Pipeline:
             self._signature_failed_ms[track_id] = now_ms
             warnings.append(FACE_WARNING)
             return
+        baseline = self._baseline_of(track_id)
         decision = self._identity.add_signature(
-            track_id, signature, self._is_frontal(track_id, face), now_ms
+            track_id, signature, baseline.is_frontal(face), now_ms, baseline.is_checkable(face)
         )
         if self._debug_on:
             self._debug_buffer.add(
@@ -311,10 +312,10 @@ class Pipeline:
             if key is not None:
                 self._decisions[key] = decision
 
-    def _is_frontal(self, track_id: int, face: RawFace) -> bool:
-        """Judged against the person's own normal once the track has a letter and they have one."""
+    def _baseline_of(self, track_id: int) -> Baseline:
+        """Views are judged against the person's own normal once the track has a letter."""
         state = self._people.get(self._identity.state_key(track_id))
-        return (state.baseline if state else Baseline()).is_frontal(face)
+        return state.baseline if state else Baseline()
 
     def _read_emotion(
         self,

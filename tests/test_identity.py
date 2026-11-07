@@ -370,6 +370,72 @@ def test_real_person_returning_takes_the_letter_from_a_failing_track():
     assert ident.letter_for(1) is None
 
 
+# -- checking is looser than storing -------------------------------------
+
+
+def test_a_view_good_enough_to_check_is_not_stored():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    stored = len(ident._signatures["A"])
+    decision = ident.add_signature(1, vec(0), False, 1000, checkable=True)
+    assert decision.outcome == "kept"
+    assert len(ident._signatures["A"]) == stored
+
+
+def test_checkable_views_count_as_mismatch_checks():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    assert ident.add_signature(1, vec(1), False, 1000, checkable=True).outcome == "mismatch"
+    second = ident.add_signature(1, vec(1), False, 2000, checkable=True)
+    assert second.outcome == "stripped, waiting"
+    assert ident.letter_for(1) is None
+    assert set(ident._signatures) == {"A"}  # the loose view stored nothing, anywhere
+
+
+def test_a_checkable_view_that_passes_clears_a_failed_check():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.add_signature(1, vec(1), True, 1000)
+    ident.add_signature(1, vec(0), False, 2000, checkable=True)
+    ident.add_signature(1, vec(1), True, 3000)
+    assert ident.letter_for(1) == "A"
+
+
+def test_letter_from_the_wait_gives_way_to_a_checkable_view_without_storing_it():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    stored = len(ident._signatures["A"])
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {2}, 9100)
+    seen(ident, {2}, 9100 + CONFIG.identity_pending_ms)
+    assert ident.letter_for(2) == "B"
+    decision = ident.add_signature(2, vec(0), False, 11200, checkable=True)
+    assert decision.outcome == "matched"
+    assert ident.letter_for(2) == "A"
+    assert len(ident._signatures["A"]) == stored
+
+
+def test_a_view_too_poor_to_check_cannot_make_a_timeout_letter_give_way():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {2}, 9100)
+    seen(ident, {2}, 9100 + CONFIG.identity_pending_ms)
+    ident.add_signature(2, vec(0), False, 11200)
+    assert ident.letter_for(2) == "B"
+
+
+def test_a_side_view_cannot_take_a_letter_from_a_failing_track():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.add_signature(1, vec(1), True, 1000)  # one bad check on track 1
+    ident.sync({1, 2}, {1, 2}, 1100)
+    decision = ident.add_signature(2, vec(0), False, 1100)
+    assert decision.outcome == "waiting"
+    assert ident.letter_for(1) == "A"
+    assert ident.letter_for(2) is None
+
+
 # -- decisions, for the debug log ----------------------------------------
 
 

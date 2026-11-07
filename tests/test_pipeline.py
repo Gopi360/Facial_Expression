@@ -298,6 +298,58 @@ def test_unknown_person_is_not_classified_until_lettered(rig):
     assert rig.pipe._people == {}
 
 
+# -- a letter that stuck -------------------------------------------------
+
+
+def test_letter_given_on_a_head_down_return_gives_way_when_they_look_up(rig):
+    """The new letter's baseline froze head-down, so upright looks wrong to the strict gate."""
+    rig.run(3000, face(1))
+    rig.run(10000)
+    rig.run(4000, face(1, pitch=25, signature=between(1, 9, 0.9)))
+    assert [p["letter"] for p in rig.result.people] == ["B"]
+    rig.run(3000, face(1))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
+def test_letter_given_on_a_turned_head_down_return_gives_way_when_they_look_up(rig):
+    rig.run(3000, face(1))
+    rig.run(10000)
+    away = CONFIG.frontal_yaw_deg + 25
+    rig.run(4000, face(1, pitch=25, yaw=away, signature=between(1, 9, 0.9)))
+    assert [p["letter"] for p in rig.result.people] == ["B"]
+    rig.run(2000, face(1))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
+def test_stranger_holding_a_steady_tilt_is_checked_and_loses_the_letter(rig):
+    rig.run(5000, face(1))
+    rig.run(3000, face(2, pitch=CONFIG.frontal_pitch_delta_deg + 8))
+    assert [p["letter"] for p in rig.result.people] == ["B"]
+
+
+def test_a_tilted_view_is_checked_but_never_stored(rig):
+    rig.run(5000, face(1))
+    store = rig.pipe._identity._signatures["A"]
+    learned = len(store)
+    rig.run(3000, face(1, pitch=CONFIG.frontal_pitch_delta_deg + 8))
+    assert len(store) == learned
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
+def test_eyes_closed_doze_inside_the_check_pitch_keeps_the_letter(rig):
+    rig.run(5000, face(1))
+    rig.run(5000, face(1, pitch=20, closed=True, signature=vector_of(9)))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
+def test_a_nod_with_heavy_eyes_is_not_a_check_so_the_sleep_rule_keeps_its_person(rig):
+    """Real numbers from the owner: a nod reads pitch delta 22, closure 0.13."""
+    rig.run(5000, face(1))
+    rig.run(5000, face(1, pitch=22, blink=0.18, signature=vector_of(9)))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+    assert rig.result.alarm is True
+
+
 # -- red marks, alarm and snaps ------------------------------------------
 
 

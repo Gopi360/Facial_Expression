@@ -60,7 +60,8 @@ class Config:
     identity_anchor_signatures: int = 3  # first good views, kept for the whole session
     identity_mismatch_checks: int = 2  # frontal checks in a row that must fail to lose a letter
     frontal_yaw_deg: float = 20
-    frontal_pitch_delta_deg: float = 12
+    frontal_pitch_delta_deg: float = 12  # the gate for storing a view
+    identity_check_pitch_delta_deg: float = 30  # looser, for checking a letter: must be under this
     min_red_ms: int = 1000
     jpeg_max_bytes: int = 2000000
     overlay_line_frac: float = 0.003

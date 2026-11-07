@@ -81,6 +81,25 @@ class Baseline:
             and pitch_ok
         )
 
+    def is_checkable(self, face: RawFace) -> bool:
+        """A view good enough to ask whether this is still the person, though not to store.
+        Allows far more pitch than is_frontal, so a baseline frozen head-down or a stranger
+        with a steady tilt still gets checked. A nod is never a check: that is someone dozing,
+        whose view looks unlike them, and losing the letter would lose their sleep count.
+        """
+        frozen = self._frozen
+        pitch_delta = face.pitch_deg - frozen.pitch if frozen is not None else 0.0
+        closure = self._closure(raw_eye_closure(face))
+        nodding = (
+            pitch_delta >= CONFIG.head_droop_deg and closure >= CONFIG.head_droop_eyes_at
+        )
+        return (
+            abs(face.yaw_deg) <= CONFIG.frontal_yaw_deg
+            and closure < CONFIG.eyes_closed_at
+            and abs(pitch_delta) < CONFIG.identity_check_pitch_delta_deg
+            and not nodding
+        )
+
     def _closure(self, raw_closure: float) -> float:
         base_closure = self._frozen.closure if self._frozen is not None else 0.0
         return clamp01((raw_closure - base_closure) / (1 - base_closure))

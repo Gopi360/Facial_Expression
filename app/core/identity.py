@@ -17,7 +17,7 @@ class _TrackState:
     first_seen_ms: float
     letter: str | None = None
     last_signature_ms: float | None = None
-    mismatches: int = 0  # frontal checks in a row that failed this letter's anchors
+    mismatches: int = 0  # checks in a row that failed this letter's anchors
 
 
 @dataclass(frozen=True)
@@ -105,8 +105,17 @@ class Identity:
                 t.letter = self._take_next_letter()
 
     def add_signature(
-        self, track_id: int, signature: np.ndarray, frontal: bool, now_ms: float
+        self,
+        track_id: int,
+        signature: np.ndarray,
+        frontal: bool,
+        now_ms: float,
+        checkable: bool | None = None,
     ) -> IdentityDecision:
+        """frontal views may be stored. checkable views, which every frontal view is, may also
+        fail or displace a letter. Any other view can only match a known person.
+        """
+        checkable = frontal if checkable is None else checkable
         track = self._tracks.setdefault(track_id, _TrackState(first_seen_ms=now_ms))
         track.last_signature_ms = now_ms
         sig = np.asarray(signature, dtype=float).copy()
@@ -123,7 +132,7 @@ class Identity:
         elif track.letter == UNKNOWN:
             outcome = "kept"
         else:
-            outcome = self._check(track_id, sig, frontal, now_ms)
+            outcome = self._check(track_id, sig, frontal, checkable, now_ms)
         return IdentityDecision(
             track.letter,
             outcome,
@@ -148,7 +157,8 @@ class Identity:
         a known person, but only a frontal view can say this is someone new.
         """
         track = self._tracks[track_id]
-        exclude = self._held_letters(except_id=track_id)
+        # Only a frontal view is sure enough to take a letter from a failing track in view.
+        exclude = (self._held_letters if frontal else self._visible_letters)(except_id=track_id)
         if rejected is not None:
             exclude.add(rejected)
         match = self._best_match(sig, exclude)
@@ -162,19 +172,22 @@ class Identity:
             self._learn(track.letter, sig)
         return "matched" if match is not None else "new letter"
 
-    def _check(self, track_id: int, sig: np.ndarray, frontal: bool, now_ms: float) -> str:
-        """Does a lettered track still look like its letter? Only frontal views can say no."""
+    def _check(
+        self, track_id: int, sig: np.ndarray, frontal: bool, checkable: bool, now_ms: float
+    ) -> str:
+        """Does a lettered track still look like its letter? Only checkable views can say no."""
         track = self._tracks[track_id]
         letter = track.letter
         store = self._signatures.get(letter)
         other = self._best_match(sig, self._visible_letters(except_id=track_id) | {letter})
 
-        if frontal and store is None and other is not None:
+        if checkable and store is None and other is not None:
             # The letter came from the pending timeout and has never seen a frontal view.
             self._hand_over(track, other[0], now_ms)
-            self._learn(other[0], sig)
+            if frontal:
+                self._learn(other[0], sig)
             return "matched"
-        if frontal and store is not None:
+        if checkable and store is not None:
             if _best_cosine(sig, store.anchors) >= CONFIG.identity_match_at:
                 track.mismatches = 0
             else:
