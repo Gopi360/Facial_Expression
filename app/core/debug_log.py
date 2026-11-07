@@ -7,7 +7,9 @@ WATCHED = ("eye_closure", "look_down", "pitch_delta")
 
 
 class DebugBuffer:
-    """Samples are dicts with t_ms, letter, signals (dict by signal name), label, confidence."""
+    """Samples are dicts with t_ms and letter. A person's frame sample also has signals (dict by
+    signal name), and an identity decision has kind "identity" and no signals.
+    """
 
     def __init__(self) -> None:
         self._items: list[dict] = []
@@ -28,7 +30,9 @@ class DebugBuffer:
     def recent_ranges(self, letter: str, now_ms: float) -> dict | None:
         recent = [
             s for s in self._items
-            if s["letter"] == letter and now_ms - s["t_ms"] <= CONFIG.debug_range_ms
+            if s["letter"] == letter
+            and "signals" in s
+            and now_ms - s["t_ms"] <= CONFIG.debug_range_ms
         ]
         if not recent:
             return None

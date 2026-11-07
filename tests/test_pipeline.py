@@ -674,6 +674,71 @@ def test_debug_lines_and_samples(tmp_path):
     assert sample["strong_sustained"] is False
 
 
+def test_debug_samples_carry_the_numbers_for_tuning(tmp_path):
+    rig = Rig(tmp_path, debug=True)
+    rig.emotion.result = {"Neutral": 0.7, "Anger": 0.3}
+    rig.run(3000, face(1, yaw=4.0, pitch=2.0))
+    rig.run(500, face(1, closed=True, yaw=4.0, pitch=2.0), delay=3)
+    sample = rig.pipe.debug_samples()[-1]
+    assert sample["raw_eye_blink"] == pytest.approx(0.95)
+    assert sample["baseline_closure"] == pytest.approx(0.05)
+    assert sample["baseline_pitch"] == pytest.approx(2.0)
+    assert sample["closed_ms"] == 400
+    assert sample["closed_threshold"] == CONFIG.eyes_closed_at
+    assert sample["yaw_deg"] == 4.0
+    assert sample["pitch_deg"] == 2.0
+    assert sample["emotion"] == {"Neutral": 0.7, "Anger": 0.3}
+
+
+def test_debug_sample_before_a_baseline_says_so(tmp_path):
+    rig = Rig(tmp_path, debug=True)
+    rig.run(200, face(1))
+    sample = rig.pipe.debug_samples()[-1]
+    assert sample["baseline_closure"] is None
+    assert sample["baseline_pitch"] is None
+
+
+def identity_samples(rig):
+    return [s for s in rig.pipe.debug_samples() if s.get("kind") == "identity"]
+
+
+def test_identity_decisions_are_in_the_debug_log_as_numbers_only(tmp_path):
+    rig = Rig(tmp_path, debug=True)
+    rig.run(100, face(1))
+    rig.run(1100, face(1), face(2, x=0.6))
+    first = identity_samples(rig)[0]
+    assert first["track"] == 1
+    assert first["outcome"] == "new letter"
+    assert first["letter"] == "A"
+    assert first["best_letter"] is None
+    later = [s for s in identity_samples(rig) if s["track"] == 1][-1]
+    assert later["outcome"] == "kept"
+    assert later["best_letter"] == "A"
+    assert later["best_score"] == pytest.approx(1.0)
+    assert later["runner_up_letter"] == "B"
+    assert later["runner_up_score"] == pytest.approx(0.0)
+    assert later["anchor_score"] == pytest.approx(1.0)
+    assert later["frontal"] is True
+    assert not any(
+        isinstance(value, (np.ndarray, list)) for s in identity_samples(rig) for value in s.values()
+    )
+
+
+def test_debug_lines_show_the_sleep_count_and_identity_score(tmp_path):
+    rig = Rig(tmp_path, debug=True)
+    rig.run(1200, face(1))
+    rig.run(500, face(1, closed=True))
+    lines = rig.result.debug
+    assert "A sleep: closed 400 ms, closed at 0.55" in lines
+    assert any(line.startswith("A identity: best A 1.00, ") for line in lines)
+    assert any(line.startswith("A raw: eyeBlink 0.95") for line in lines)
+
+
+def test_no_identity_decisions_are_kept_with_debug_off(rig):
+    rig.run(300, face(1))
+    assert rig.pipe.debug_samples() == []
+
+
 def test_debug_wording_for_strong_expressions():
     text = pipeline_module._drowsy_text
     assert text({"strong_sustained": True, "strong_held": True, "drowsy_sign": None}) == (

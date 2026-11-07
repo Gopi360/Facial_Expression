@@ -11,13 +11,16 @@ from app.core.types import DrowsySign, Reading, Signals
 MS_PER_SEC = 1000
 
 
-def _is_eyes_closed(s: Signals) -> bool:
-    threshold = (
+def _closed_threshold(s: Signals) -> float:
+    return (
         CONFIG.eyes_closed_when_looking_down_at
         if s.look_down >= CONFIG.look_down_at
         else CONFIG.eyes_closed_at
     )
-    return s.eye_closure >= threshold
+
+
+def _is_eyes_closed(s: Signals) -> bool:
+    return s.eye_closure >= _closed_threshold(s)
 
 
 def _is_angry(s: Signals) -> bool:
@@ -78,6 +81,8 @@ class PersonClassifier:
             "drowsy_sign": None,
             "strong_held": False,
             "strong_sustained": False,
+            "closed_ms": 0,
+            "closed_threshold": CONFIG.eyes_closed_at,
         }
 
     def debug_info(self) -> dict:
@@ -106,8 +111,14 @@ class PersonClassifier:
             "drowsy_sign": self._state.drowsy_sign if self._drowsy_active(now_ms) else None,
             "strong_held": strong,
             "strong_sustained": sustained,
+            "closed_ms": self._closed_ms(now_ms),
+            "closed_threshold": _closed_threshold(s),
         }
         return self._display(s, self._candidate(s, now_ms, delay_ms, strong, emotion), now_ms)
+
+    def _closed_ms(self, now_ms: float) -> float:
+        closed_since_ms = self._state.closed_since_ms
+        return now_ms - closed_since_ms if closed_since_ms is not None else 0
 
     def _skip_gap(self, s: Signals, gap_ms: float, now_ms: float, delay_ms: float) -> None:
         """Nobody saw this time, so no hold counts it. Whatever was counted before it stands,

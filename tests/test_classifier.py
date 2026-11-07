@@ -744,6 +744,8 @@ def test_debug_starts_quiet():
         "drowsy_sign": None,
         "strong_held": False,
         "strong_sustained": False,
+        "closed_ms": 0,
+        "closed_threshold": CONFIG.eyes_closed_at,
     }
 
 
@@ -788,3 +790,16 @@ def test_debug_does_not_change_what_update_returns():
 
     assert isinstance(reading, Reading)
     assert set(vars(reading)) == {"label", "confidence"}
+
+
+# Debug numbers
+
+
+def test_debug_info_gives_the_closed_count_and_the_threshold_in_force():
+    classifier = PersonClassifier()
+    classifier.update(OPEN, 0, 3, None)
+    assert classifier.debug_info()["closed_ms"] == 0
+    assert classifier.debug_info()["closed_threshold"] == CONFIG.eyes_closed_at
+    run(classifier, replace(CLOSED, look_down=0.9), 66, 1066)
+    assert classifier.debug_info()["closed_ms"] == 1000
+    assert classifier.debug_info()["closed_threshold"] == CONFIG.eyes_closed_when_looking_down_at

@@ -17,13 +17,13 @@ def sample(t_ms, letter="A", **changes):
     }
 
 
-def test_keeps_about_the_last_30_seconds():
+def test_keeps_about_the_last_90_seconds():
     b = DebugBuffer()
-    for t in range(0, 40001, 1000):
+    for t in range(0, 100001, 1000):
         b.add(sample(t))
     times = [s["t_ms"] for s in b.samples()]
-    assert times[0] == 40000 - CONFIG.debug_buffer_ms
-    assert times[-1] == 40000
+    assert times[0] == 100000 - CONFIG.debug_buffer_ms
+    assert times[-1] == 100000
 
 
 def test_keeps_every_person_in_the_window():
@@ -51,3 +51,13 @@ def test_no_ranges_for_person_with_no_recent_samples():
     b.add(sample(0, "A"))
     assert b.recent_ranges("B", 100) is None
     assert b.recent_ranges("A", 20000) is None
+
+
+def test_ranges_skip_samples_with_no_signals():
+    buffer = DebugBuffer()
+    buffer.add({"t_ms": 0, "letter": "A", "kind": "identity"})
+    assert buffer.recent_ranges("A", 0) is None
+
+
+def test_buffer_keeps_90_seconds():
+    assert CONFIG.debug_buffer_ms == 90000

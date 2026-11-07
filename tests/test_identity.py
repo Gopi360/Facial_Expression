@@ -368,3 +368,32 @@ def test_real_person_returning_takes_the_letter_from_a_failing_track():
     ident.add_signature(2, vec(0), True, 1100)
     assert ident.letter_for(2) == "A"
     assert ident.letter_for(1) is None
+
+
+# -- decisions, for the debug log ----------------------------------------
+
+
+def test_decision_reports_scores_from_before_the_view_was_learned():
+    ident = Identity()
+    seen(ident, {1}, 0)
+    first = ident.add_signature(1, vec(0), True, 0)
+    assert first.outcome == "new letter"
+    assert first.letter == "A"
+    assert first.best_letter is None
+    assert first.best_score is None
+    assert first.anchor_score is None
+
+
+def test_decision_names_each_outcome():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    assert ident.add_signature(1, vec(0), True, 10).outcome == "kept"
+    assert ident.add_signature(1, vec(1), True, 20).outcome == "mismatch"
+    stripped = ident.add_signature(1, vec(1), True, 30)
+    assert stripped.outcome == "stripped, new letter"
+    assert stripped.letter == "B"
+    seen(ident, {1, 2}, 40)
+    waiting = ident.add_signature(2, vec(5), False, 40)
+    assert waiting.outcome == "waiting"
+    assert waiting.letter is None
+    assert ident.add_signature(2, vec(0), True, 50).outcome == "matched"

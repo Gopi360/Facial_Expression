@@ -49,7 +49,7 @@ class Config:
     max_delay_sec: int = 10
     log_cap: int = 100
     paused_note_ms: int = 3000
-    debug_buffer_ms: int = 30000
+    debug_buffer_ms: int = 90000
     debug_range_ms: int = 10000
     # python rebuild additions
     target_fps: int = 15

@@ -13,8 +13,8 @@ from .core.classifier import PersonClassifier
 from .core.config import CONFIG
 from .core.debug_log import WATCHED, DebugBuffer
 from .core.events import diff_events, is_red, should_sound
-from .core.identity import UNKNOWN, Identity
-from .core.signals import Baseline
+from .core.identity import UNKNOWN, Identity, IdentityDecision
+from .core.signals import Baseline, raw_eye_closure
 from .core.snap_policy import SnapPolicy
 from .core.text import face_count_text, person_line
 from .core.tracker import Tracker
@@ -113,7 +113,26 @@ def _drowsy_text(info: dict) -> str:
     return f"{sign}, strong expression delays sleeping" if info["strong_held"] else sign
 
 
-def _debug_lines(letter: str, signals: Signals, ranges: dict | None, info: dict) -> list[str]:
+def _identity_text(decision: IdentityDecision) -> str:
+    def named(letter: str | None, score: float | None) -> str:
+        return "none" if letter is None else f"{letter} {score:.2f}"
+
+    best = named(decision.best_letter, decision.best_score)
+    runner_up = named(decision.runner_up_letter, decision.runner_up_score)
+    return f"best {best}, runner-up {runner_up}, {decision.outcome}"
+
+
+def _number(value: float | None) -> str:
+    return "learning" if value is None else f"{value:.2f}"
+
+
+def _debug_lines(
+    letter: str,
+    signals: Signals,
+    ranges: dict | None,
+    sample: dict,
+    decision: IdentityDecision | None,
+) -> list[str]:
     live = "  ".join(f"{name} {value:.2f}" for name, value in asdict(signals).items())
     lines = [f"{letter}: {live}"]
     if ranges:
@@ -121,7 +140,19 @@ def _debug_lines(letter: str, signals: Signals, ranges: dict | None, info: dict)
             f"{name} {ranges[name]['min']:.2f} to {ranges[name]['max']:.2f}" for name in WATCHED
         )
         lines.append(f"{letter} last {CONFIG.debug_range_ms // 1000}s: {parts}")
-    lines.append(f"{letter} drowsy: {_drowsy_text(info)}")
+    lines.append(f"{letter} drowsy: {_drowsy_text(sample)}")
+    lines.append(
+        f"{letter} sleep: closed {sample['closed_ms']:.0f} ms, "
+        f"closed at {sample['closed_threshold']:.2f}"
+    )
+    lines.append(
+        f"{letter} raw: eyeBlink {sample['raw_eye_blink']:.2f}  "
+        f"pitch {sample['pitch_deg']:.1f}  yaw {sample['yaw_deg']:.1f}  "
+        f"baseline closure {_number(sample['baseline_closure'])}  "
+        f"pitch {_number(sample['baseline_pitch'])}"
+    )
+    if decision is not None:
+        lines.append(f"{letter} identity: {_identity_text(decision)}")
     return lines
 
 
@@ -141,6 +172,7 @@ class Pipeline:
         self._signature_tried_ms: dict[int, float] = {}
         self._labels: dict[str, str] = {}
         self._red_proof: dict[str, _RedProof] = {}
+        self._decisions: dict[str, IdentityDecision] = {}  # the latest, for the debug view
         self._alarm = False
         self._log: list[str] = []
         self._frame: np.ndarray | None = None
@@ -268,9 +300,16 @@ class Pipeline:
             self._signature_failed_ms[track_id] = now_ms
             warnings.append(FACE_WARNING)
             return
-        self._identity.add_signature(
+        decision = self._identity.add_signature(
             track_id, signature, self._is_frontal(track_id, face), now_ms
         )
+        if self._debug_on:
+            self._debug_buffer.add(
+                {"t_ms": now_ms, "kind": "identity", "track": track_id, **asdict(decision)}
+            )
+            key = self._identity.state_key(track_id)
+            if key is not None:
+                self._decisions[key] = decision
 
     def _is_frontal(self, track_id: int, face: RawFace) -> bool:
         """Judged against the person's own normal once the track has a letter and they have one."""
@@ -313,7 +352,7 @@ class Pipeline:
                 state.reading = state.classifier.update(signals, now_ms, delay_sec, state.emotion)
                 state.box = face.box
                 if self._debug_on:
-                    debug += self._debug_sample(key, signals, state, now_ms)
+                    debug += self._debug_sample(key, face, signals, state, now_ms)
             if state.reading is not None and state.box is not None:
                 present[key] = Person(
                     _shown_letter(key), state.box, state.reading, face is not None
@@ -322,20 +361,26 @@ class Pipeline:
         return {key: present[key] for key in order}
 
     def _debug_sample(
-        self, key: str, signals: Signals, state: _PersonState, now_ms: float
+        self, key: str, face: RawFace, signals: Signals, state: _PersonState, now_ms: float
     ) -> list[str]:
-        info = state.classifier.debug_info()
-        self._debug_buffer.add(
-            {
-                "t_ms": now_ms,
-                "letter": key,
-                "signals": asdict(signals),
-                "label": state.reading.label,
-                "confidence": state.reading.confidence,
-                **info,
-            }
-        )
-        return _debug_lines(key, signals, self._debug_buffer.recent_ranges(key, now_ms), info)
+        normal = state.baseline.normal()
+        sample = {
+            "t_ms": now_ms,
+            "letter": key,
+            "signals": asdict(signals),
+            "label": state.reading.label,
+            "confidence": state.reading.confidence,
+            "raw_eye_blink": raw_eye_closure(face),
+            "baseline_closure": normal.closure if normal else None,
+            "baseline_pitch": normal.pitch if normal else None,
+            "yaw_deg": face.yaw_deg,
+            "pitch_deg": face.pitch_deg,
+            "emotion": state.emotion,
+            **state.classifier.debug_info(),
+        }
+        self._debug_buffer.add(sample)
+        ranges = self._debug_buffer.recent_ranges(key, now_ms)
+        return _debug_lines(key, signals, ranges, sample, self._decisions.get(key))
 
     def _events(
         self,

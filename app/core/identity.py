@@ -20,6 +20,20 @@ class _TrackState:
     mismatches: int = 0  # frontal checks in a row that failed this letter's anchors
 
 
+@dataclass(frozen=True)
+class IdentityDecision:
+    """What one signature led to, for the debug log. Numbers and letters, never a signature."""
+
+    letter: str | None  # the track's letter afterwards
+    outcome: str
+    frontal: bool
+    best_letter: str | None  # scores are as they stood before this view could be learned
+    best_score: float | None
+    runner_up_letter: str | None
+    runner_up_score: float | None
+    anchor_score: float | None  # against the letter the track came in with
+
+
 def _rolling() -> deque[np.ndarray]:
     return deque(maxlen=CONFIG.identity_max_signatures)
 
@@ -92,15 +106,34 @@ class Identity:
 
     def add_signature(
         self, track_id: int, signature: np.ndarray, frontal: bool, now_ms: float
-    ) -> None:
+    ) -> IdentityDecision:
         track = self._tracks.setdefault(track_id, _TrackState(first_seen_ms=now_ms))
         track.last_signature_ms = now_ms
         sig = np.asarray(signature, dtype=float).copy()
 
+        ranked = sorted(
+            ((self._score(sig, letter), letter) for letter in self._signatures), reverse=True
+        )
+        best, runner_up = (*ranked[:2], (None, None), (None, None))[:2]
+        store = self._signatures.get(track.letter)
+        anchor_score = _best_cosine(sig, store.anchors) if store else None
+
         if track.letter is None:
-            self._place(track_id, sig, frontal, now_ms)
-        elif track.letter != UNKNOWN:
-            self._check(track_id, sig, frontal, now_ms)
+            outcome = self._place(track_id, sig, frontal, now_ms)
+        elif track.letter == UNKNOWN:
+            outcome = "kept"
+        else:
+            outcome = self._check(track_id, sig, frontal, now_ms)
+        return IdentityDecision(
+            track.letter,
+            outcome,
+            frontal,
+            best[1],
+            best[0],
+            runner_up[1],
+            runner_up[0],
+            anchor_score,
+        )
 
     # -- helpers ---------------------------------------------------------
     def _place(
@@ -110,7 +143,7 @@ class Identity:
         frontal: bool,
         now_ms: float,
         rejected: str | None = None,
-    ) -> None:
+    ) -> str:
         """Give a letterless track a letter if this view can decide one. Any view can match
         a known person, but only a frontal view can say this is someone new.
         """
@@ -119,14 +152,17 @@ class Identity:
         if rejected is not None:
             exclude.add(rejected)
         match = self._best_match(sig, exclude)
+        if match is None and not frontal:
+            return "waiting"
         if match is not None:
             self._hand_over(track, match[0], now_ms)
-        elif frontal:
+        else:
             track.letter = self._take_next_letter()
-        if frontal and track.letter is not None:
+        if frontal:
             self._learn(track.letter, sig)
+        return "matched" if match is not None else "new letter"
 
-    def _check(self, track_id: int, sig: np.ndarray, frontal: bool, now_ms: float) -> None:
+    def _check(self, track_id: int, sig: np.ndarray, frontal: bool, now_ms: float) -> str:
         """Does a lettered track still look like its letter? Only frontal views can say no."""
         track = self._tracks[track_id]
         letter = track.letter
@@ -137,20 +173,21 @@ class Identity:
             # The letter came from the pending timeout and has never seen a frontal view.
             self._hand_over(track, other[0], now_ms)
             self._learn(other[0], sig)
-            return
+            return "matched"
         if frontal and store is not None:
             if _best_cosine(sig, store.anchors) >= CONFIG.identity_match_at:
                 track.mismatches = 0
             else:
                 track.mismatches += 1
-                if track.mismatches >= CONFIG.identity_mismatch_checks:
-                    self._strip(track, now_ms)
-                    self._place(track_id, sig, frontal, now_ms, rejected=letter)
-                return
+                if track.mismatches < CONFIG.identity_mismatch_checks:
+                    return "mismatch"
+                self._strip(track, now_ms)
+                return f"stripped, {self._place(track_id, sig, frontal, now_ms, rejected=letter)}"
         if other is not None and other[1] > self._score(sig, letter):
-            return  # clearly someone else: do not flip, do not learn
+            return "refused"  # clearly someone else: do not flip, do not learn
         if frontal:
             self._learn(letter, sig)
+        return "kept"
 
     def _learn(self, letter: str, sig: np.ndarray) -> None:
         if letter == UNKNOWN:
