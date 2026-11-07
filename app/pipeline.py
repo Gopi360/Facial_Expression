@@ -195,6 +195,9 @@ class Pipeline:
         return self._debug_buffer.samples()
 
     def close(self, at: datetime) -> None:
+        if self._alarm:
+            self._alarm = False
+            self._record([LogEvent(at, "System", "alarm stopped")])
         self._files.close(at)
 
     def _find(self, frame: np.ndarray, warnings: list[str]) -> list[RawFace]:
@@ -336,7 +339,7 @@ class Pipeline:
 
         for key, person in present.items():
             label = person.reading.label
-            if not self._snaps.update(key, is_red(label), now_ms):
+            if not self._snaps.update(key, is_red(label), now_ms, person.visible):
                 continue
             who = f"Person {person.letter}"
             path, warning = self._save_snap(frame, people, at, person.letter, label)

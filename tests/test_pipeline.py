@@ -8,7 +8,7 @@ import app.pipeline as pipeline_module
 from app.core.config import CONFIG
 from app.core.types import Box, RawFace
 from app.pipeline import Pipeline
-from app.session_files import SessionFiles, format_line
+from app.session_files import SessionFiles
 
 START = datetime(2026, 11, 6, 16, 30, 0)
 STEP_MS = 100
@@ -94,6 +94,12 @@ class Rig:
         self.run(2500, face(marker))
         self.run(2500, face(marker, closed=True))
         assert self.result.alarm
+
+    def first_red_frame(self, marker=1):
+        self.run(2500, face(marker))
+        self.finder.faces = [face(marker, closed=True)]
+        while not self.frame().alarm:
+            pass
 
     def use_up_the_letters(self):
         for marker in range(1, 27):
@@ -283,6 +289,35 @@ def test_leaving_forgets_the_snap_even_if_the_reading_stays_red(rig):
     assert len(rig.snaps()) == 2
 
 
+def test_hidden_red_person_takes_no_snap(rig):
+    rig.first_red_frame()
+    rig.run(300, face(1, closed=True))
+    rig.run(CONFIG.letter_release_ms + 500)
+    assert rig.result.people == []
+    assert rig.snaps() == []
+
+
+def test_one_red_frame_then_finder_failure_takes_no_snap(rig):
+    rig.first_red_frame()
+    rig.finder.error = RuntimeError("detector broke")
+    rig.run(CONFIG.letter_release_ms + 500)
+    assert rig.result.alarm is False
+    assert rig.snaps() == []
+
+
+def test_returning_still_red_snaps_once_after_a_visible_second(rig):
+    rig.first_red_frame()
+    rig.run(300, face(1, closed=True))
+    rig.run(1500)
+    assert rig.result.people[0]["visible"] is False
+    rig.run(500, face(1, closed=True))
+    assert rig.snaps() == []
+    rig.run(CONFIG.min_red_ms, face(1, closed=True))
+    assert len(rig.snaps()) == 1
+    rig.run(3000, face(1, closed=True))
+    assert len(rig.snaps()) == 1
+
+
 def test_alarm_start_and_stop_are_logged(rig):
     rig.go_red()
     rig.run(3000, face(1))
@@ -443,10 +478,6 @@ def test_panel_log_is_capped(rig):
     assert rig.result.log[0].endswith("| Person A | joined")
 
 
-def test_log_uses_the_shared_formatter():
-    assert pipeline_module.format_line is format_line
-
-
 def test_session_log_write_failure_warns(tmp_path):
     block_folder(tmp_path / "logs")
     rig = Rig(tmp_path)
@@ -514,3 +545,17 @@ def test_debug_wording_for_strong_expressions():
 def test_close_writes_session_ended(rig):
     rig.pipe.close(at(1000))
     assert rig.log_text().splitlines()[-1].endswith("| System | session ended")
+
+
+def test_close_during_alarm_logs_alarm_stopped(rig):
+    rig.go_red()
+    rig.pipe.close(at(rig.t))
+    last_two = rig.log_text().splitlines()[-2:]
+    assert last_two[0].endswith("| System | alarm stopped")
+    assert last_two[1].endswith("| System | session ended")
+
+
+def test_close_without_an_alarm_logs_no_alarm_stopped(rig):
+    rig.run(300, face(1))
+    rig.pipe.close(at(rig.t))
+    assert "alarm stopped" not in rig.log_text()

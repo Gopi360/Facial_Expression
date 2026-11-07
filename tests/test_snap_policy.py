@@ -51,3 +51,49 @@ def test_drop_forgets_red_start():
     p.drop("A")
     assert not p.update("A", True, 1100)
     assert not p.update("A", True, 1100 + 200)
+
+
+def test_hidden_red_person_takes_no_snap():
+    p = SnapPolicy()
+    assert not p.update("A", True, 0)
+    assert not p.update("A", True, 300)
+    for t in range(400, 3000, 100):
+        assert not p.update("A", True, t, visible=False)
+
+
+def test_time_hidden_does_not_count_towards_the_red_time():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    p.update("A", True, 300)
+    p.update("A", True, 400, visible=False)
+    p.update("A", True, 2000, visible=False)
+    assert not p.update("A", True, 2100)
+    assert not p.update("A", True, 2700)
+    assert p.update("A", True, 2800)
+
+
+def test_snap_due_while_hidden_waits_until_visible_time_is_reached():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    p.update("A", True, 900)
+    assert not p.update("A", True, 1500, visible=False)
+    assert not p.update("A", True, 1600)
+    assert p.update("A", True, 1700)
+
+
+def test_hiding_after_the_snap_keeps_the_event_open():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    assert p.update("A", True, 1000)
+    assert not p.update("A", True, 1100, visible=False)
+    assert not p.update("A", True, 1200)
+    assert not p.update("A", True, 5000)
+
+
+def test_going_normal_while_hidden_rearms():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    assert p.update("A", True, 1000)
+    assert not p.update("A", False, 1100, visible=False)
+    assert not p.update("A", True, 1200)
+    assert p.update("A", True, 2200)
