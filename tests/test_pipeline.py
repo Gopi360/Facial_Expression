@@ -790,6 +790,20 @@ def test_time_with_no_face_is_not_closed_eye_time(rig):
     assert rig.snaps() == []
 
 
+def test_four_faces_rate_still_reaches_sleeping_and_the_alarm(rig):
+    step_ms = 222  # about 4.5 frames a second
+    rig.finder.faces = [face(1)]
+    for _ in range(20):
+        rig.pipe.process(JPEG, rig.t, at(rig.t), 3)
+        rig.t += step_ms
+    rig.finder.faces = [face(1, closed=True)]
+    shut_ms = rig.t
+    while not rig.pipe.process(JPEG, rig.t, at(rig.t), 3).alarm:
+        rig.t += step_ms
+        assert rig.t - shut_ms < 4000
+    assert rig.t - shut_ms >= 3000
+
+
 def test_alarm_start_and_stop_are_logged(rig):
     rig.go_red()
     rig.run(3000, face(1))

@@ -31,6 +31,7 @@ class Config:
     expression_limit_ms: int = 5000
     label_hold_ms: int = 500
     strong_dip_grace_ms: int = 200
+    frame_gap_limit_ms: int = 500  # longer between frames is a gap, not time that was watched
     frame_gap_reset_ms: int = 2500
     smile_at: float = 0.35
     strong_smile_at: float = 0.5

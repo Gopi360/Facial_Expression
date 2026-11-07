@@ -89,7 +89,7 @@ class PersonClassifier:
         gap_ms = now_ms - last_update_ms if last_update_ms is not None else 0
         if gap_ms > CONFIG.frame_gap_reset_ms:
             self._state = _State()
-        elif gap_ms > CONFIG.open_grace_ms:
+        elif gap_ms > CONFIG.frame_gap_limit_ms:
             self._skip_gap(s, gap_ms, now_ms, delay_ms)
         self._state.last_update_ms = now_ms
 

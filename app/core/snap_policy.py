@@ -38,7 +38,7 @@ class SnapPolicy:
         if not visible:
             if run.last_visible_ms is not None:
                 interval_ms = now_ms - run.last_visible_ms
-                if interval_ms <= CONFIG.open_grace_ms:  # longer is a gap, not a frame interval
+                if interval_ms <= CONFIG.frame_gap_limit_ms:  # longer is a gap, not a frame
                     run.lost_ms += interval_ms
             run.last_visible_ms = None
             return False

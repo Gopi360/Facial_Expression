@@ -3,6 +3,7 @@
 Scenarios that asserted a label from blendshapes now also pass the model scores
 that give that label. The blendshapes stay, because the sleep path reads them.
 """
+import random
 from collections.abc import Callable
 from dataclasses import replace
 
@@ -221,9 +222,10 @@ def test_a_gap_just_before_the_delay_then_open_eyes_never_shows_sleeping():
 def test_closed_time_does_not_carry_over_a_closure_a_gap_ended():
     classifier = PersonClassifier()
     run(classifier, CLOSED, 0, 2500)
-    classifier.update(OPEN, 3000, 3, None)
+    back_ms = 2500 + CONFIG.frame_gap_limit_ms + 1
+    classifier.update(OPEN, back_ms, 3, None)
 
-    assert run(classifier, CLOSED, 3066, 5900).label != "sleeping"
+    assert run(classifier, CLOSED, back_ms + STEP_MS, 5900).label != "sleeping"
 
 
 def test_a_frame_gap_within_the_open_grace_still_counts():
@@ -232,6 +234,58 @@ def test_a_frame_gap_within_the_open_grace_still_counts():
     reading = classifier.update(CLOSED, 2800 + CONFIG.open_grace_ms, 3, None)
 
     assert reading.label == "sleeping"
+
+
+def test_a_frame_gap_up_to_the_limit_counts_as_seen():
+    classifier = PersonClassifier()
+    run(classifier, CLOSED, 0, 2800)
+    reading = classifier.update(CLOSED, 2800 + CONFIG.frame_gap_limit_ms, 3, None)
+
+    assert reading.label == "sleeping"
+
+
+def test_a_frame_gap_over_the_limit_does_not_count():
+    classifier = PersonClassifier()
+    run(classifier, CLOSED, 0, 2800)
+    reading = classifier.update(CLOSED, 2800 + CONFIG.frame_gap_limit_ms + 1, 3, None)
+
+    assert reading.label != "sleeping"
+
+
+def seconds_to_sleeping(fps: float, jitter: float, seed: int) -> float | None:
+    """Eyes shut at a random moment between two frames, delay 3, frames at about this rate."""
+    rnd = random.Random(seed)
+    classifier = PersonClassifier()
+    step_ms = 1000 / fps
+    t = 0.0
+    while t < 3000:
+        classifier.update(OPEN, t, 3, None)
+        t += step_ms
+    shut_ms = t - rnd.random() * step_ms
+    while t < shut_ms + 15000:
+        if classifier.update(CLOSED, t, 3, None).label == "sleeping":
+            return (t - shut_ms) / 1000
+        t += step_ms * rnd.uniform(1 - jitter, 1 + jitter)
+    return None
+
+
+@pytest.mark.parametrize("fps", [4, 4.5, 5, 6, 7, 8, 9])
+def test_sleeping_arrives_on_time_at_slow_frame_rates(fps):
+    for seed in range(7):
+        assert 3.0 <= seconds_to_sleeping(fps, 0.3, seed) <= 3.5
+
+
+@pytest.mark.parametrize("fps", [4, 4.5, 5])
+@pytest.mark.parametrize("blink_ms", [150, 300])
+def test_normal_blinking_gives_no_red_label_at_slow_frame_rates(fps, blink_ms):
+    classifier = PersonClassifier()
+    step_ms = 1000 / fps
+    t = 0.0
+    while t < 120000:
+        blinking = t % 3700 < blink_ms
+        label = classifier.update(CLOSED if blinking else OPEN, t, 3, None).label
+        assert label not in ("sleeping", "drowsy")
+        t += step_ms
 
 
 def test_a_gap_does_not_count_towards_the_droopy_hold():

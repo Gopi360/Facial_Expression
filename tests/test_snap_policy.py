@@ -1,4 +1,13 @@
+from app.core.config import CONFIG
 from app.core.snap_policy import SnapPolicy
+
+
+def test_a_slow_frame_still_counts_as_the_interval_they_were_lost_in():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    p.update("A", True, 800)
+    p.update("A", True, 800 + CONFIG.frame_gap_limit_ms, visible=False)
+    assert p.drop("A")
 
 
 def test_flicker_under_one_second_takes_no_snap():
