@@ -2,7 +2,7 @@
 
 A demo that watches the laptop camera and says, live, what each person in view seems to be doing. It runs on your laptop only. Python does the detection and logic. The browser page only handles the camera, the screen and the alarm sound.
 
-**Status: demo. The thresholds are untuned estimates carried over from an earlier version, and accuracy on real faces has not been checked yet.** See "Tuning on camera" below.
+**Status: demo. Sleep thresholds are tuned from real readings of one person with glasses. Sleep, the alarm, angry, smiling, recognition and far faces have worked on real people, but other faces and rooms may need tuning.** See "Tuning on camera" below.
 
 ## Not for safety, driver or medical use
 

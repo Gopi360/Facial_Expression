@@ -2,7 +2,7 @@
 
 Date: 2026-11-06
 Owner: Supriya Gope
-Status: Draft, waiting for owner approval
+Status: Replaced by `2026-11-06-python-rebuild-design.md`. Code stays on `feat/expression-demo`.
 
 ## 1. Intent
 

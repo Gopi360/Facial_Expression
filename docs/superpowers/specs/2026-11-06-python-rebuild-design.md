@@ -2,7 +2,7 @@
 
 Date: 2026-11-06
 Owner: Supriya Gope
-Status: Draft, waiting for owner approval
+Status: Approved and built on `feat/python-rebuild`. Later changes (YuNet for far faces, far people get no expression) are in `docs/superpowers/HANDOVER.md`.
 Replaces: `2026-11-06-facial-expression-demo-design.md` (the TypeScript version)
 
 ## 1. Intent
