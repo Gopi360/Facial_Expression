@@ -436,6 +436,46 @@ def test_a_side_view_cannot_take_a_letter_from_a_failing_track():
     assert ident.letter_for(2) is None
 
 
+# -- a far track holds its letter loosely --------------------------------
+
+
+def test_a_near_frontal_match_takes_the_letter_from_a_far_track():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.sync({1, 2}, {1, 2}, 1000, far_ids={1})
+    assert ident.add_signature(2, vec(0), True, 1000).outcome == "matched"
+    assert ident.letter_for(2) == "A"
+    assert ident.letter_for(1) is None
+
+
+def test_a_side_view_cannot_take_a_letter_from_a_far_track():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.sync({1, 2}, {1, 2}, 1000, far_ids={1})
+    ident.add_signature(2, vec(0), False, 1000)
+    assert ident.letter_for(1) == "A"
+    assert ident.letter_for(2) is None
+
+
+def test_a_near_track_still_holds_its_letter():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.sync({1, 2}, {1, 2}, 1000, far_ids={2})
+    ident.add_signature(2, vec(0), False, 1000)
+    assert ident.letter_for(1) == "A"
+
+
+def test_a_letter_from_the_wait_gives_way_to_the_same_person_held_by_a_far_track():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.sync({1, 2}, {1, 2}, 1000, far_ids={1})
+    ident.sync({1, 2}, {1, 2}, 1000 + CONFIG.identity_pending_ms, far_ids={1})
+    assert ident.letter_for(2) == "B"
+    ident.add_signature(2, vec(0), True, 3100)
+    assert ident.letter_for(2) == "A"
+    assert ident.letter_for(1) is None
+
+
 # -- decisions, for the debug log ----------------------------------------
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -66,6 +67,7 @@ class Identity:
         self._signatures: dict[str, _Store] = {}
         self._issued: set[str] = set()
         self._visible: set[int] = set()
+        self._far: set[int] = set()
         self._unknown_count = 0
 
     # -- queries ---------------------------------------------------------
@@ -90,8 +92,15 @@ class Identity:
         return len(self._issued) + self._unknown_count
 
     # -- updates ---------------------------------------------------------
-    def sync(self, visible_ids: set[int], active_ids: set[int], now_ms: float) -> None:
+    def sync(
+        self,
+        visible_ids: set[int],
+        active_ids: set[int],
+        now_ms: float,
+        far_ids: Collection[int] = (),
+    ) -> None:
         self._visible = set(visible_ids)
+        self._far = set(far_ids)
         for tid in active_ids:
             self._tracks.setdefault(tid, _TrackState(first_seen_ms=now_ms))
         for tid in [t for t in self._tracks if t not in active_ids]:
@@ -179,7 +188,8 @@ class Identity:
         track = self._tracks[track_id]
         letter = track.letter
         store = self._signatures.get(letter)
-        other = self._best_match(sig, self._visible_letters(except_id=track_id) | {letter})
+        taken = (self._near_letters if frontal else self._visible_letters)(except_id=track_id)
+        other = self._best_match(sig, taken | {letter})
 
         if checkable and store is None and other is not None:
             # The letter came from the pending timeout and has never seen a frontal view.
@@ -236,9 +246,25 @@ class Identity:
     def _visible_letters(self, except_id: int) -> set[str]:
         return {t.letter for t in self._visible_tracks(except_id)}
 
+    def _near_tracks(self, except_id: int) -> list[_TrackState]:
+        """Lettered near faces in view. A far view can't prove a letter, and may be a picture
+        that took over the track of someone leaving, so a good near view outranks it.
+        """
+        return [
+            t
+            for tid, t in self._tracks.items()
+            if tid in self._visible
+            and tid not in self._far
+            and tid != except_id
+            and t.letter is not None
+        ]
+
+    def _near_letters(self, except_id: int) -> set[str]:
+        return {t.letter for t in self._near_tracks(except_id)}
+
     def _held_letters(self, except_id: int) -> set[str]:
-        """Letters another face in view is sure of. One failing its own letter can lose it."""
-        return {t.letter for t in self._visible_tracks(except_id) if t.mismatches == 0}
+        """Letters another near face is sure of. One failing its own letter can lose it."""
+        return {t.letter for t in self._near_tracks(except_id) if t.mismatches == 0}
 
     def _score(self, sig: np.ndarray, letter: str) -> float:
         store = self._signatures.get(letter)

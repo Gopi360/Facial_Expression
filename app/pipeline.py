@@ -207,7 +207,8 @@ class Pipeline:
         seen = dict(self._tracker.update(faces, now_ms))
         active_ids = self._tracker.active_ids()
         tracked = self._without_unconfirmed(seen, active_ids, now_ms)
-        self._identity.sync(set(tracked), active_ids, now_ms)
+        far_ids = {track_id for track_id, face in tracked.items() if face.far}
+        self._identity.sync(set(tracked), active_ids, now_ms, far_ids)
         self._heavy_check(frame, tracked, now_ms, warnings)
 
         debug: list[str] = []

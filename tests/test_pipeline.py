@@ -551,6 +551,21 @@ def test_red_for_under_the_snap_limit_then_far_takes_no_snap(rig):
     assert rig.pipe._red_proof == {}
 
 
+def test_wall_picture_uncovered_as_a_leaves_cannot_keep_their_letter(rig):
+    rig.run(3000, face(1, x=0.4))
+    rig.run(1500)
+    picture = far(7, x=0.45)
+    rig.run(3000, picture)
+    assert rig.result.lines == [FAR_LINE]  # the picture inherited the track, for now
+    rig.run(500, face(1, x=0.1), picture)
+    shown = {p["box"]["x"]: p["letter"] for p in rig.result.people}
+    assert shown[0.1] == "A"
+    assert shown[0.45] is None
+    rig.run(CONFIG.identity_pending_ms + 500, face(1, x=0.1), picture)
+    assert rig.result.lines == ["Person A looks neutral 100%", "Person B is too far to read"]
+    assert list(rig.pipe._identity._signatures) == ["A"]
+
+
 def test_far_view_strips_nothing_and_stores_nothing(rig):
     rig.run(5000, face(1))
     store = rig.pipe._identity._signatures["A"]
