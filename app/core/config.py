@@ -77,6 +77,8 @@ class Config:
     warning_hold_ms: int = 5000
     reply_timeout_ms: int = 5000
     frame_finish_grace_ms: int = 1000
+    # far faces
+    far_confirm_frames: int = 5  # frames in a row before a far face shows at all
 
 
 CONFIG = Config()

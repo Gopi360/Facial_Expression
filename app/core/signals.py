@@ -69,7 +69,10 @@ class Baseline:
     def is_frontal(self, face: RawFace) -> bool:
         """A view good enough to recognise this person by: facing the camera, eyes open and
         head near their normal pitch. With no normal yet, pitch cannot be judged. Learns nothing.
+        A far view has no eyes or pitch to judge, and is never good enough.
         """
+        if face.far:
+            return False
         frozen = self._frozen
         pitch_ok = (
             frozen is None
@@ -87,6 +90,8 @@ class Baseline:
         with a steady tilt still gets checked. A nod is never a check: that is someone dozing,
         whose view looks unlike them, and losing the letter would lose their sleep count.
         """
+        if face.far:
+            return False
         frozen = self._frozen
         pitch_delta = face.pitch_deg - frozen.pitch if frozen is not None else 0.0
         closure = self._closure(raw_eye_closure(face))

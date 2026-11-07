@@ -8,7 +8,7 @@ from typing import Literal
 DrowsySign = Literal["slowBlinks", "droopy", "headDroop", "stayedClosed"]
 
 Label = Literal[
-    "sleeping", "drowsy", "yawning", "angry", "laughing", "smiling", "crying", "neutral"
+    "sleeping", "drowsy", "yawning", "angry", "laughing", "smiling", "crying", "neutral", "far"
 ]
 
 
@@ -29,6 +29,7 @@ class RawFace:
     pitch_deg: float
     yaw_deg: float
     points: list[tuple[float, float]]  # 5 points, pixels
+    far: bool = False  # too small to read: a box and points only, with empty scores
 
 
 @dataclass(frozen=True)

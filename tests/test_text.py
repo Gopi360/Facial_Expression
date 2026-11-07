@@ -31,5 +31,9 @@ def test_person_line_words_all_labels(label, line):
     assert person_line(person(label)) == line
 
 
+def test_far_person_line_has_no_percent():
+    assert person_line(person("far", 0, letter="B")) == "Person B is too far to read"
+
+
 def test_person_without_letter_shows_identifying():
     assert person_line(person("neutral", letter=None)) == "Identifying..."

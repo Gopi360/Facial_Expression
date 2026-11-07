@@ -12,6 +12,7 @@ LINE_WORDS: dict[Label, str] = {
     "smiling": "is smiling",
     "crying": "is crying",
     "neutral": "looks neutral",
+    "far": "is too far to read",
 }
 
 
@@ -24,4 +25,6 @@ def face_count_text(n: int) -> str:
 def person_line(p: Person) -> str:
     if p.letter is None:
         return "Identifying..."
+    if p.reading.label == "far":
+        return f"Person {p.letter} {LINE_WORDS['far']}"  # nothing was read, so no percent
     return f"Person {p.letter} {LINE_WORDS[p.reading.label]} {round(p.reading.confidence)}%"

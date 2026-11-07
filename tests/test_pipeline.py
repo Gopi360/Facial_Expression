@@ -350,6 +350,224 @@ def test_a_nod_with_heavy_eyes_is_not_a_check_so_the_sleep_rule_keeps_its_person
     assert rig.result.alarm is True
 
 
+# -- far faces -----------------------------------------------------------
+
+
+FAR_LINE = "Person A is too far to read"
+
+
+def far(marker=1, x=0.1, signature=None):
+    """Real far faces have empty scores. The marker is only for FakeSigner."""
+    found = RawFace(Box(x, 0.1, 0.05, 0.05), {"marker": marker}, 0, 0, [(0.0, 0.0)] * 5, far=True)
+    found.signature = signature
+    return found
+
+
+def confirm_far(rig, *faces):
+    rig.run(CONFIG.far_confirm_frames * STEP_MS, *faces)
+
+
+def lettered_far(rig, marker=1):
+    rig.run(CONFIG.far_confirm_frames * STEP_MS + CONFIG.identity_pending_ms, far(marker))
+
+
+def test_far_face_shows_nothing_until_it_has_lasted(rig):
+    rig.finder.faces = [far()]
+    for _ in range(CONFIG.far_confirm_frames - 1):
+        result = rig.frame()
+        assert result.people == []
+        assert result.lines == []
+        assert result.count_text == "No faces found"
+    assert "Person" not in rig.log_text()
+    assert rig.signer.calls == []
+    result = rig.frame()
+    assert [p["letter"] for p in result.people] == [None]
+    assert result.count_text == "1 face found"
+
+
+def test_flickering_false_face_never_shows_and_costs_no_letter(rig):
+    for _ in range(5):
+        rig.run((CONFIG.far_confirm_frames - 1) * STEP_MS, far())
+        assert rig.result.people == []
+        rig.run(STEP_MS)
+    assert rig.result.count_text == "No faces found"
+    assert rig.pipe._identity.people_count() == 0
+    assert rig.signer.calls == []
+    assert "Person" not in rig.log_text()
+
+
+def test_a_false_face_does_not_hide_or_add_to_the_near_people(rig):
+    rig.run(500, face(1))
+    rig.run((CONFIG.far_confirm_frames - 1) * STEP_MS, face(1), far(2, x=0.8))
+    assert rig.result.lines == ["Person A looks neutral 100%"]
+    assert rig.result.count_text == "1 face found"
+
+
+def test_far_person_shows_a_box_and_letter_with_a_line_and_no_percent(rig):
+    lettered_far(rig)
+    assert rig.result.lines == [FAR_LINE]
+    assert rig.result.people == [
+        {
+            "letter": "A",
+            "box": {"x": 0.1, "y": 0.1, "width": 0.05, "height": 0.05},
+            "label": "far",
+            "confidence": 0,
+            "red": False,
+            "reason": None,
+            "visible": True,
+        }
+    ]
+    assert rig.result.alarm is False
+
+
+def test_far_person_who_is_seen_on_and_off_stays_shown(rig):
+    lettered_far(rig)
+    rig.run(STEP_MS)
+    assert rig.result.people[0]["visible"] is False
+    rig.run(STEP_MS, far())
+    assert rig.result.people[0]["visible"] is True
+
+
+def test_far_person_never_gets_an_emotion_check(rig):
+    lettered_far(rig)
+    rig.run(1000, far())
+    assert rig.emotion.calls == []
+
+
+def test_far_person_takes_no_snap_or_alarm_and_stays_out_of_the_debug_numbers(tmp_path):
+    rig = Rig(tmp_path, debug=True)
+    lettered_far(rig)
+    rig.run(3000, far())
+    assert rig.result.alarm is False
+    assert rig.snaps() == []
+    assert rig.result.debug == []
+    assert not [s for s in rig.pipe.debug_samples() if "signals" in s]
+
+
+def test_going_far_and_back_keeps_the_letter_and_logs_it(rig):
+    rig.run(3000, face(1))
+    rig.run(1000, far())
+    assert rig.result.lines == [FAR_LINE]
+    assert "| Person A | is too far to read\n" in rig.log_text()
+    rig.run(1000, face(1))
+    assert rig.result.lines == ["Person A looks neutral 100%"]
+    assert rig.pipe._identity.people_count() == 1
+    assert "| Person A | left" not in rig.log_text()
+
+
+def test_far_face_never_feeds_the_baseline_or_classifier(rig):
+    rig.run(500, face(1))
+    state = rig.pipe._people["A"]
+    samples = len(state.baseline._closures)
+    updated_ms = state.classifier._state.last_update_ms
+    rig.run(1000, far())
+    assert rig.result.lines == [FAR_LINE]
+    assert len(state.baseline._closures) == samples
+    assert state.baseline.normal() is None
+    assert state.classifier._state.last_update_ms == updated_ms
+
+
+def test_time_far_away_is_not_closed_eye_time(rig):
+    """Eyes closed 1.5s, far 1.8s, back with eyes open."""
+    rig.run(4000, face(1))
+    rig.run(1500, face(1, closed=True), delay=3)
+    rig.run(1800, far(), delay=3)
+    assert rig.result.lines == [FAR_LINE]
+    rig.finder.faces = [face(1)]
+    for _ in range(15):
+        assert not rig.frame(delay=3).alarm
+        assert rig.result.people[0]["label"] != "sleeping"
+    assert "fell asleep" not in rig.log_text()
+
+
+def test_time_far_away_does_not_add_to_a_closure_that_carries_on(rig):
+    """Eyes closed 1.5s, far 1.8s, then closed 1s more: only 2.5s were seen, under the delay."""
+    rig.run(4000, face(1))
+    rig.run(1500, face(1, closed=True), delay=3)
+    rig.run(1800, far(), delay=3)
+    rig.finder.faces = [face(1, closed=True)]
+    for _ in range(10):
+        assert not rig.frame(delay=3).alarm
+
+
+def test_alarming_person_going_far_stops_the_alarm(rig):
+    rig.go_red()
+    rig.run(1000, far())
+    assert rig.result.alarm is False
+    assert rig.result.people[0]["red"] is False
+    assert rig.log_text().count("| System | alarm stopped") == 1
+    assert len(rig.snaps()) == 1
+
+
+def test_far_view_strips_nothing_and_stores_nothing(rig):
+    rig.run(5000, face(1))
+    store = rig.pipe._identity._signatures["A"]
+    learned = len(store)
+    rig.run(4000, far(2))
+    assert rig.result.lines == [FAR_LINE]
+    assert len(store) == learned
+
+
+def test_far_view_cannot_create_a_letter_early_or_store_one(rig):
+    confirm_far(rig, far())
+    rig.run(CONFIG.identity_pending_ms - 2 * STEP_MS, far())
+    assert rig.result.lines == ["Identifying..."]
+    rig.run(3 * STEP_MS, far())
+    assert rig.result.lines == [FAR_LINE]
+    assert rig.pipe._identity._signatures == {}
+
+
+def test_far_view_can_match_a_known_letter(rig):
+    rig.run(3000, face(1))
+    rig.run(10000)
+    confirm_far(rig, far())
+    rig.run(2 * STEP_MS, far())
+    assert rig.result.lines == [FAR_LINE]
+    assert rig.pipe._identity.people_count() == 1
+
+
+def test_letter_from_the_wait_gives_way_when_the_far_person_comes_close(rig):
+    rig.run(3000, face(1))
+    rig.run(10000)
+    unreadable = between(1, 9, 0.9)
+    rig.run(CONFIG.far_confirm_frames * STEP_MS, far(signature=unreadable))
+    rig.run(CONFIG.identity_pending_ms, far(signature=unreadable))
+    assert rig.result.lines == ["Person B is too far to read"]
+    rig.run(1500, face(1))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
+def test_near_person_lost_for_a_moment_is_hidden_not_called_far(rig):
+    rig.go_red()
+    rig.run((CONFIG.far_confirm_frames - 1) * STEP_MS, far())
+    assert rig.result.alarm is True
+    assert rig.result.people[0]["visible"] is False
+    assert rig.result.people[0]["label"] == "sleeping"
+
+
+def test_a_face_on_the_edge_of_near_and_far_never_reads_as_far(rig):
+    rig.run(3000, face(1))
+    for _ in range(20):
+        rig.run(STEP_MS, far())
+        rig.run(STEP_MS, face(1))
+    assert "too far" not in rig.log_text()
+    assert rig.result.lines == ["Person A looks neutral 100%"]
+
+
+def test_far_faces_count_towards_max_faces(rig):
+    near = [face(i, x=0.2 * i) for i in range(1, 4)]
+    rig.run(1000 + CONFIG.identity_pending_ms, *near, far(4, x=0.9), far(5, x=0.05))
+    assert rig.result.count_text == "4 faces found"
+    assert rig.result.overflow is True
+
+
+def test_one_frame_of_a_false_far_face_does_not_claim_a_crowd(rig):
+    near = [face(i, x=0.2 * i) for i in range(1, 5)]
+    rig.run(500, *near)
+    rig.run(STEP_MS, *near, far(5, x=0.05))
+    assert rig.result.overflow is False
+
+
 # -- red marks, alarm and snaps ------------------------------------------
 
 

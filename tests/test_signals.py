@@ -271,3 +271,11 @@ def test_a_check_view_with_no_baseline_judges_eyes_and_yaw_only():
     baseline = Baseline()
     assert baseline.is_checkable(face(0.1, 40))
     assert not baseline.is_checkable(face(0.9, 0))
+
+
+def test_a_far_view_is_neither_frontal_nor_checkable():
+    far_view = RawFace(Box(0, 0, 0.05, 0.05), {}, 0, 0, [], far=True)
+    assert not settled_baseline().is_frontal(far_view)
+    assert not settled_baseline().is_checkable(far_view)
+    assert not Baseline().is_frontal(far_view)
+    assert not Baseline().is_checkable(far_view)

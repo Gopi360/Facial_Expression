@@ -32,6 +32,7 @@ NO_FRAME_WARNING = "There is no camera frame to save yet."
 SNAP_WARNING = "Could not save the snap"
 
 WAITING_READING = Reading("neutral", 0)  # shown for a face with no letter, never classified
+FAR_READING = Reading("far", 0)  # nothing can be read at this size, so the number means nothing
 MANUAL_LETTER = "all"
 MANUAL_REASON = "manual"
 
@@ -170,6 +171,8 @@ class Pipeline:
         self._people: dict[str, _PersonState] = {}  # by state key, never deleted
         self._signature_failed_ms: dict[int, float] = {}
         self._signature_tried_ms: dict[int, float] = {}
+        self._far_runs: dict[int, int] = {}  # far frames in a row, by track
+        self._crowded_frames = 0
         self._labels: dict[str, str] = {}
         self._red_proof: dict[str, _RedProof] = {}
         self._decisions: dict[str, IdentityDecision] = {}  # the latest, for the debug view
@@ -191,8 +194,9 @@ class Pipeline:
 
         warnings, self._pending_warnings = self._pending_warnings, []
         faces = self._find(frame, warnings)
-        tracked = dict(self._tracker.update(faces, now_ms))
+        seen = dict(self._tracker.update(faces, now_ms))
         active_ids = self._tracker.active_ids()
+        tracked = self._without_unconfirmed(seen, active_ids)
         self._identity.sync(set(tracked), active_ids, now_ms)
         self._heavy_check(frame, tracked, now_ms, warnings)
 
@@ -217,7 +221,7 @@ class Pipeline:
             log=list(self._log),
             alarm=self._alarm,
             warning=" ".join(dict.fromkeys(warnings)) or None,
-            overflow=len(faces) > CONFIG.max_faces,
+            overflow=self._overflow(faces),
             debug=debug if self._debug_on else None,
         )
         return self._last
@@ -253,6 +257,35 @@ class Pipeline:
             warnings.append(DETECT_WARNING)
             return []
 
+    def _without_unconfirmed(
+        self, seen: dict[int, RawFace], active_ids: set[int]
+    ) -> dict[int, RawFace]:
+        """A far face counts as not seen until its track has lasted, which keeps false faces
+        off the screen, and a near person lost for a moment hidden rather than called far.
+        A near frame starts the count again, so a face on the edge of the two stays near.
+        """
+        needed = CONFIG.far_confirm_frames
+        for track_id, run in list(self._far_runs.items()):
+            if track_id not in active_ids or (track_id not in seen and run < needed):
+                del self._far_runs[track_id]
+        for track_id, face in seen.items():
+            if face.far:
+                self._far_runs[track_id] = self._far_runs.get(track_id, 0) + 1
+            else:
+                self._far_runs.pop(track_id, None)
+        return {
+            track_id: face
+            for track_id, face in seen.items()
+            if not face.far or self._far_runs[track_id] >= needed
+        }
+
+    def _overflow(self, faces: list[RawFace]) -> bool:
+        """Too many near faces say so at once. Far ones could be false, so they must last."""
+        crowded = len(faces) > CONFIG.max_faces
+        self._crowded_frames = self._crowded_frames + 1 if crowded else 0
+        near = sum(not face.far for face in faces)
+        return near > CONFIG.max_faces or self._crowded_frames >= CONFIG.far_confirm_frames
+
     def _heavy_check(
         self, frame: np.ndarray, tracked: dict[int, RawFace], now_ms: float, warnings: list[str]
     ) -> None:
@@ -268,7 +301,7 @@ class Pipeline:
         due = []
         for track_id, face in tracked.items():
             key = self._identity.state_key(track_id)
-            if key is None:
+            if key is None or face.far:
                 continue
             state = self._people.setdefault(key, _PersonState())
             if now_ms - state.emotion_tried_ms >= CONFIG.emotion_interval_ms:
@@ -348,7 +381,11 @@ class Pipeline:
                 continue
             state = self._people.setdefault(key, _PersonState())
             face = tracked.get(track_id)
-            if face is not None:
+            if face is not None and face.far:
+                # Baseline and classifier hear nothing, so to them this is a gap like any other.
+                state.reading = FAR_READING
+                state.box = face.box
+            elif face is not None:
                 signals = state.baseline.to_signals(face, now_ms)
                 state.reading = state.classifier.update(signals, now_ms, delay_sec, state.emotion)
                 state.box = face.box

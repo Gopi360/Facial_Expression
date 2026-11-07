@@ -46,6 +46,21 @@ def test_all_label_wording():
         assert diff_events({"A": "yawning"}, {"A": r(label)}, AT)[0].what == text
 
 
+def test_going_far_is_logged_with_no_confidence():
+    ev = diff_events({"A": "neutral"}, {"A": r("far", 0)}, AT)
+    assert (ev[0].what, ev[0].confidence) == ("is too far to read", None)
+
+
+def test_coming_back_from_far_logs_the_new_label():
+    ev = diff_events({"A": "far"}, {"A": r("neutral", 90)}, AT)
+    assert (ev[0].what, ev[0].confidence) == ("looks neutral", 90)
+
+
+def test_far_is_not_red_and_makes_no_sound():
+    assert not is_red("far")
+    assert not should_sound(["far"])
+
+
 def test_is_red():
     assert is_red("sleeping") and is_red("drowsy")
     assert not is_red("yawning") and not is_red("neutral")

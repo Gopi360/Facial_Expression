@@ -17,6 +17,7 @@ LOG_WORDS: dict[Label, str] = {
     "smiling": "started smiling",
     "crying": "looks like crying",
     "neutral": "looks neutral",
+    "far": "is too far to read",
 }
 
 
@@ -38,7 +39,8 @@ def diff_events(prev: dict[str, Label], nxt: dict[str, Reading], at: datetime) -
         if before is None:
             out.append(LogEvent(at, who, "joined"))
         elif before != reading.label:
-            out.append(LogEvent(at, who, LOG_WORDS[reading.label], reading.confidence))
+            confidence = None if reading.label == "far" else reading.confidence
+            out.append(LogEvent(at, who, LOG_WORDS[reading.label], confidence))
     for letter in prev:
         if letter not in nxt:
             out.append(LogEvent(at, f"Person {letter}", "left"))
