@@ -37,6 +37,7 @@ STALLED_MESSAGE = "The app stopped responding. Reload the page, and restart the 
 # What the page reads from GET /config, so it holds no copy of these numbers.
 PAGE_CONFIG = (
     "target_fps",
+    "max_faces",
     "min_delay_sec",
     "max_delay_sec",
     "default_delay_sec",

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 class Config:
     # tracking and baseline
     max_faces: int = 4
-    min_frame_gap_ms: int = 66
     letter_release_ms: int = 2000
     max_match_distance: float = 0.25
     baseline_ms: int = 2000

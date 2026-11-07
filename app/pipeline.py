@@ -395,6 +395,7 @@ class Pipeline:
         events = [_shown_event(e) for e in diff_events(self._labels, readings, at)]
         for key in self._labels:
             if key not in present:
+                self._forget_emotion(key)
                 owed = self._snaps.drop(key)
                 proof = self._red_proof.pop(key, None)
                 if owed and proof is not None:
@@ -419,6 +420,13 @@ class Pipeline:
             elif person.visible:
                 self._red_proof[key] = _RedProof(frame, people, person, at)
         return events
+
+    def _forget_emotion(self, key: str) -> None:
+        """Once released, the last scores are stale: they must not label a return."""
+        state = self._people.get(key)
+        if state is not None:
+            state.emotion = None
+            state.emotion_tried_ms = -math.inf
 
     def _snap_event(
         self,

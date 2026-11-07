@@ -10,7 +10,6 @@ const LOST_MESSAGE = 'Connection to the app was lost. Check it is running, then 
 const BUSY_MESSAGE = 'The app is already open in another tab.';
 const STALLED_MESSAGE = 'The app stopped responding. Reload the page, and restart the app if this repeats.';
 const CONFIG_ERROR_MESSAGE = 'The app settings could not be loaded. Check it is running, then reload.';
-const OVERFLOW_MESSAGE = 'Showing the 4 largest faces';
 const CAPTURE_WARNING = 'Skipped a camera frame that could not be captured.';
 const REPLY_WARNING = 'The app sent a reply that could not be read.';
 const DEBUG_LOG_ERROR_MESSAGE = 'The debug log could not be saved. Please try again.';
@@ -79,6 +78,7 @@ class Beeper {
     } catch (err) {
       console.error('Alarm sound failed', err);
       this.sounding = false;
+      showBriefly(SOUND_ERROR_MESSAGE, config.warning_hold_ms);
     }
   }
 
@@ -213,7 +213,7 @@ function renderStrip(reply) {
   if (reply.overflow) {
     const note = document.createElement('div');
     note.className = 'strip-overflow';
-    note.textContent = OVERFLOW_MESSAGE;
+    note.textContent = `Showing the ${config.max_faces} largest faces`;
     strip.append(note);
   }
 }
@@ -242,6 +242,16 @@ function scheduleFrame() {
   frameTimer = window.setTimeout(sendFrame, wait);
 }
 
+/** Keeps the camera's own shape, so one that ignores the asked-for size is not stretched. */
+function fitCapture() {
+  const { videoWidth, videoHeight } = video;
+  const scale = Math.min(1, config.frame_width / videoWidth, config.frame_height / videoHeight);
+  const width = Math.round(videoWidth * scale);
+  const height = Math.round(videoHeight * scale);
+  if (capture.width !== width) capture.width = width;
+  if (capture.height !== height) capture.height = height;
+}
+
 function sendFrame() {
   frameTimer = null;
   if (!running || document.hidden) return;
@@ -251,11 +261,15 @@ function sendFrame() {
     return;
   }
   frameInFlight = true;
+  // Armed first, so a capture that never calls back cannot leave the alarm on with no frames.
+  replyTimer = window.setTimeout(() => endSession(STALLED_MESSAGE), config.reply_timeout_ms);
   try {
+    fitCapture();
     capture.getContext('2d').drawImage(video, 0, 0, capture.width, capture.height);
     capture.toBlob(onFrameCaptured, 'image/jpeg', config.jpeg_quality);
   } catch (err) {
     console.error('Frame capture failed', err);
+    window.clearTimeout(replyTimer);
     showBriefly(CAPTURE_WARNING, config.warning_hold_ms);
     frameInFlight = false;
     scheduleFrame();
@@ -265,9 +279,9 @@ function sendFrame() {
 function onFrameCaptured(blob) {
   if (blob && running && !document.hidden && socket?.readyState === WebSocket.OPEN) {
     socket.send(blob);
-    replyTimer = window.setTimeout(() => endSession(STALLED_MESSAGE), config.reply_timeout_ms);
     return;
   }
+  window.clearTimeout(replyTimer);
   frameInFlight = false;
   scheduleFrame();
 }
@@ -327,7 +341,7 @@ function endSession(text) {
 async function startCamera() {
   try {
     const opened = await navigator.mediaDevices.getUserMedia({
-      video: { width: capture.width, height: capture.height },
+      video: { width: config.frame_width, height: config.frame_height },
       audio: false,
     });
     if (sessionOver) {
@@ -473,8 +487,6 @@ async function loadConfig() {
     showMessage(CONFIG_ERROR_MESSAGE);
     return;
   }
-  capture.width = config.frame_width;
-  capture.height = config.frame_height;
   delaySlider.min = String(config.min_delay_sec);
   delaySlider.max = String(config.max_delay_sec);
   delaySlider.value = String(config.default_delay_sec);

@@ -577,6 +577,26 @@ def test_emotion_failure_keeps_last_emotion(rig):
     assert rig.pipe._people["A"].emotion == {"Anger": 0.9}
 
 
+def test_stale_emotion_is_cleared_when_a_person_returns_after_release(rig):
+    rig.emotion.result = {"Anger": 0.9}
+    rig.run(1000, face(1))
+    assert rig.result.people[0]["label"] == "angry"
+    rig.run(CONFIG.letter_release_ms + 200)
+    rig.emotion.error = ValueError("empty crop")
+    rig.run(1000, face(1))
+    assert rig.pipe._people["A"].emotion is None
+    assert rig.result.people[0]["label"] == "neutral"
+
+
+def test_emotion_is_kept_through_the_grace(rig):
+    rig.emotion.result = {"Anger": 0.9}
+    rig.run(1000, face(1))
+    rig.run(1000)
+    rig.emotion.error = ValueError("empty crop")
+    rig.run(300, face(1))
+    assert rig.result.people[0]["label"] == "angry"
+
+
 def test_failing_emotion_does_not_starve_other_people(rig):
     rig.emotion.failing_x = 0.1
     rig.run(500, face(1, x=0.1), face(2, x=0.6))

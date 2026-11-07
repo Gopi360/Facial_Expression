@@ -474,6 +474,7 @@ def test_config_endpoint_matches_config(client):
     assert response.status_code == 200
     assert response.json() == {
         "target_fps": CONFIG.target_fps,
+        "max_faces": CONFIG.max_faces,
         "min_delay_sec": CONFIG.min_delay_sec,
         "max_delay_sec": CONFIG.max_delay_sec,
         "default_delay_sec": CONFIG.default_delay_sec,
@@ -500,6 +501,8 @@ def test_page_has_no_copy_of_config_values():
     numbers = set(re.findall(r"(?<![\w.])\d+(?:\.\d+)?", code))
     # 0 and 1 are logic, 100 makes a percentage and 1000 is milliseconds in a second.
     assert numbers <= {"0", "1", "100", "1000"}
+
+    assert not re.search(r"\d+ largest", source)  # a number in a message is still a copy
 
     page = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     delay_input = re.search(r'<input id="delay"[^>]*>', page).group()
