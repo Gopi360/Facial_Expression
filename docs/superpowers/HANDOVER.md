@@ -7,7 +7,8 @@ Last updated: 2026-11-07. Read this first when starting a new chat.
 A local Python demo that reads the laptop camera and shows each person's expression, sounds an alarm for sleep, and keeps a log and snaps of red marks. Stage 1 is built and working on real people. **Nothing is merged yet.**
 
 - **Work branch:** `feat/python-rebuild` (all current code).
-- **`main`:** holds only an empty first commit. There is no GitHub remote yet.
+- **`main`:** holds only an empty first commit.
+- **GitHub:** https://github.com/Gopi360/Facial_Expression (public). All three branches are pushed.
 - **`feat/expression-demo`:** the old TypeScript version, kept for reference.
 - **Tests:** 451 passing. Run `.venv\Scripts\python -m pytest -q`.
 - **Start the app:** `.venv\Scripts\python -m uvicorn app.server:app --host 127.0.0.1 --port 8000`, then open `http://127.0.0.1:8000/`. Add `?debug=1` for raw numbers.
@@ -38,7 +39,7 @@ A local Python demo that reads the laptop camera and shows each person's express
 
 ## Pending work, in order
 
-1. **Finish the three untested checks above**, then decide on the merge. Options: merge to `main` locally, or create a GitHub repo and open a pull request. No remote exists, so a pull request needs one first.
+1. **Finish the three untested checks above**, then decide on the merge. Options: merge to `main` locally, or open a pull request on GitHub.
 2. **Stage 2: ear and device detection.** Not built. See below.
 3. **Small known issues**, listed below.
 4. **Names (undecided).** The app shows Person A and Person B and learns faces live. The owner raised few-shot registration from photos, as in their earlier project `E:\MCA_MAJOR_PROJECT\Smart-Exam-Hall-Attendance-System`, but did not say whether they want real names. Ask.
