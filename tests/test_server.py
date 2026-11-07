@@ -490,7 +490,16 @@ def test_config_endpoint_matches_config(client):
         "beep_on_ms": CONFIG.beep_on_ms,
         "beep_off_ms": CONFIG.beep_off_ms,
         "beep_peak_gain": CONFIG.beep_peak_gain,
+        "low_fps_warning": CONFIG.low_fps_warning,
+        "low_fps_hold_ms": CONFIG.low_fps_hold_ms,
     }
+
+
+def test_page_warns_when_it_runs_slowly():
+    source = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    assert "Running slowly, so sleep detection may be late." in source
+    assert "config.low_fps_warning" in source
+    assert "config.low_fps_hold_ms" in source
 
 
 def test_page_has_no_copy_of_config_values():

@@ -78,6 +78,8 @@ class Config:
     warning_hold_ms: int = 5000
     reply_timeout_ms: int = 5000
     frame_finish_grace_ms: int = 1000
+    low_fps_warning: float = 6  # the page warns if the frame rate stays under this
+    low_fps_hold_ms: int = 4000  # for this long
     # far faces
     far_confirm_frames: int = 5  # frames in a row before a far face shows at all
     far_every_frames: int = 2  # YuNet runs this often; frames between reuse what it found

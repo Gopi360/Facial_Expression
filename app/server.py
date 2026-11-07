@@ -53,6 +53,8 @@ PAGE_CONFIG = (
     "beep_on_ms",
     "beep_off_ms",
     "beep_peak_gain",
+    "low_fps_warning",
+    "low_fps_hold_ms",
 )
 
 _models: tuple[FaceFinder, EmotionModel, FaceSigner] | None = None

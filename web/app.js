@@ -12,6 +12,7 @@ const STALLED_MESSAGE = 'The app stopped responding. Reload the page, and restar
 const CONFIG_ERROR_MESSAGE = 'The app settings could not be loaded. Check it is running, then reload.';
 const CAPTURE_WARNING = 'Skipped a camera frame that could not be captured.';
 const REPLY_WARNING = 'The app sent a reply that could not be read.';
+const LOW_FPS_MESSAGE = 'Running slowly, so sleep detection may be late.';
 const DEBUG_LOG_ERROR_MESSAGE = 'The debug log could not be saved. Please try again.';
 
 const video = document.getElementById('video');
@@ -124,6 +125,8 @@ let muted = false;
 let lastError = null; // an error with no frame since: if the socket closes now, this is why
 let shownLog = '';
 let messageTimer = null;
+let replyTimes = []; // when each recent frame reply came, for the measured frame rate
+let replyWatchFrom = null; // the rate means nothing until a whole window has been watched
 
 function showMessage(text) {
   window.clearTimeout(messageTimer);
@@ -286,6 +289,25 @@ function onFrameCaptured(blob) {
   scheduleFrame();
 }
 
+function resetFrameRate() {
+  replyTimes = [];
+  replyWatchFrom = null;
+}
+
+/** Sleep timing suffers quietly when frames are slow, so say so. Other messages go first. */
+function watchFrameRate() {
+  const now = performance.now();
+  replyWatchFrom ??= now;
+  const windowStart = now - config.low_fps_hold_ms;
+  replyTimes = replyTimes.filter((time) => time >= windowStart);
+  replyTimes.push(now);
+  if (replyWatchFrom > windowStart) return;
+  const fps = replyTimes.length / (config.low_fps_hold_ms / 1000);
+  if (fps < config.low_fps_warning && message.hidden) {
+    showBriefly(LOW_FPS_MESSAGE, config.warning_hold_ms);
+  }
+}
+
 function onFrameReply(reply) {
   lastError = null;
   if (!running) return;
@@ -297,6 +319,7 @@ function onFrameReply(reply) {
   renderLog(reply.log);
   if (debugOn) debug.textContent = (reply.debug ?? []).join('\n');
   if (reply.warning) showBriefly(reply.warning, config.warning_hold_ms);
+  watchFrameRate();
 }
 
 function saveDebugLog(samples) {
@@ -444,6 +467,7 @@ function start() {
  * would stick on. Frames after return turn it back on if it is still needed.
  */
 function onVisibilityChange() {
+  resetFrameRate();
   if (document.hidden) {
     alarmOn = false;
     updateSound();
