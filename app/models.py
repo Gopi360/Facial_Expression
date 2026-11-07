@@ -1,4 +1,4 @@
-"""Real model wrappers: MediaPipe face landmarks, HSEmotion ONNX, OpenCV SFace."""
+"""Real model wrappers: MediaPipe face landmarks, YuNet far faces, HSEmotion ONNX, OpenCV SFace."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,9 +10,10 @@ import onnxruntime as ort
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
+from app.core.config import CONFIG
 from app.core.expressions import EMOTIONS
 from app.core.signals import angles_from_matrix
-from app.core.types import Box, RawFace
+from app.core.types import Box, FarDetectFailed, RawFace
 
 # SFace point order: right eye, left eye, nose, right mouth corner, left mouth corner
 _POINT_INDICES = (468, 473, 1, 61, 291)
@@ -31,9 +32,45 @@ def _require(models_dir: Path, name: str) -> str:
     return str(path)
 
 
+def _same_face(far: Box, near: Box) -> bool:
+    """YuNet and MediaPipe boxes for one face differ a little, so an exact match never comes."""
+    centre_x, centre_y = far.x + far.width / 2, far.y + far.height / 2
+    if near.x <= centre_x <= near.x + near.width and near.y <= centre_y <= near.y + near.height:
+        return True
+    overlap_w = min(far.x + far.width, near.x + near.width) - max(far.x, near.x)
+    overlap_h = min(far.y + far.height, near.y + near.height) - max(far.y, near.y)
+    if overlap_w <= 0 or overlap_h <= 0:
+        return False
+    smaller = min(far.width * far.height, near.width * near.height)
+    return overlap_w * overlap_h >= CONFIG.far_same_face_overlap * smaller
+
+
+def _far_faces(rows: np.ndarray | None, near: list[RawFace], w: int, h: int) -> list[RawFace]:
+    """YuNet results that are not a face MediaPipe already has. Each row is a box, five points
+    already in SFace order, and a score. A wide face MediaPipe missed stays missed, as a person
+    close to the camera is never too far to read.
+    """
+    if rows is None:
+        return []
+    faces: list[RawFace] = []
+    for row in rows:
+        x, y, width, height = (float(value) for value in row[:4])
+        if not CONFIG.far_min_width_px <= width <= CONFIG.far_max_width_px:
+            continue
+        x0, y0 = max(x, 0.0), max(y, 0.0)
+        x1, y1 = min(x + width, float(w)), min(y + height, float(h))
+        box = Box(x0 / w, y0 / h, (x1 - x0) / w, (y1 - y0) / h)
+        if any(_same_face(box, face.box) for face in near):
+            continue
+        points = [(float(row[i]), float(row[i + 1])) for i in range(4, 14, 2)]
+        faces.append(RawFace(box, {}, 0.0, 0.0, points, far=True))
+    return faces
+
+
 class FaceFinder:
     def __init__(self, models_dir: Path):
         path = _require(models_dir, "face_landmarker.task")
+        far_path = _require(models_dir, "yunet.onnx")
         options = vision.FaceLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=path),
             running_mode=vision.RunningMode.IMAGE,
@@ -42,6 +79,9 @@ class FaceFinder:
             output_facial_transformation_matrixes=True,
         )
         self._landmarker = vision.FaceLandmarker.create_from_options(options)
+        self._yunet = cv2.FaceDetectorYN.create(
+            far_path, "", (CONFIG.frame_width, CONFIG.frame_height), CONFIG.far_score_at
+        )
 
     def find(self, frame_bgr: np.ndarray) -> list[RawFace]:
         h, w = frame_bgr.shape[:2]
@@ -66,7 +106,15 @@ class FaceFinder:
                     pitch, yaw = 0.0, 0.0
             points = [(marks[k].x * w, marks[k].y * h) for k in _POINT_INDICES]
             faces.append(RawFace(Box(x0, y0, x1 - x0, y1 - y0), scores, pitch, yaw, points))
-        return faces
+        return faces + self._find_far(frame_bgr, faces)
+
+    def _find_far(self, frame_bgr: np.ndarray, near: list[RawFace]) -> list[RawFace]:
+        h, w = frame_bgr.shape[:2]
+        try:
+            self._yunet.setInputSize((w, h))
+            return _far_faces(self._yunet.detect(frame_bgr)[1], near, w, h)
+        except Exception as e:
+            raise FarDetectFailed(near) from e
 
 
 def _softmax(x: np.ndarray) -> np.ndarray:

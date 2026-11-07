@@ -6,7 +6,7 @@ import pytest
 
 import app.pipeline as pipeline_module
 from app.core.config import CONFIG
-from app.core.types import Box, RawFace
+from app.core.types import Box, FarDetectFailed, RawFace
 from app.pipeline import Pipeline
 from app.session_files import SessionFiles
 
@@ -559,6 +559,14 @@ def test_far_faces_count_towards_max_faces(rig):
     rig.run(1000 + CONFIG.identity_pending_ms, *near, far(4, x=0.9), far(5, x=0.05))
     assert rig.result.count_text == "4 faces found"
     assert rig.result.overflow is True
+
+
+def test_far_detection_failure_warns_and_keeps_the_near_faces(rig):
+    rig.finder.error = FarDetectFailed([face(1)])
+    rig.run(300)
+    assert rig.result.warning == pipeline_module.FAR_WARNING
+    assert rig.result.lines == ["Person A looks neutral 100%"]
+    assert rig.result.people[0]["visible"] is True
 
 
 def test_one_frame_of_a_false_far_face_does_not_claim_a_crowd(rig):

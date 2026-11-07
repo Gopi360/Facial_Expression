@@ -18,7 +18,7 @@ from .core.signals import Baseline, raw_eye_closure
 from .core.snap_policy import SnapPolicy
 from .core.text import face_count_text, person_line
 from .core.tracker import Tracker
-from .core.types import Box, LogEvent, Person, RawFace, Reading, Signals
+from .core.types import Box, FarDetectFailed, LogEvent, Person, RawFace, Reading, Signals
 from .session_files import SessionFiles, format_line, render_snap
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ EMPTY_FRAME_WARNING = "Skipped an empty camera frame."
 LARGE_FRAME_WARNING = "Skipped a camera frame that was too large."
 BAD_FRAME_WARNING = "Skipped a camera frame that could not be read."
 DETECT_WARNING = "Face detection stopped working. Reload the page to try again."
+FAR_WARNING = "Could not look for far faces on this frame."
 FACE_WARNING = "One face could not be read on this frame."
 NO_FRAME_WARNING = "There is no camera frame to save yet."
 SNAP_WARNING = "Could not save the snap"
@@ -251,6 +252,10 @@ class Pipeline:
     def _find(self, frame: np.ndarray, warnings: list[str]) -> list[RawFace]:
         try:
             return self._finder.find(frame)
+        except FarDetectFailed as failure:
+            logger.exception("Far face detection failed")
+            warnings.append(FAR_WARNING)
+            return failure.near
         except Exception:
             # Carry on with no faces, so people leave after their grace and the alarm cannot stick.
             logger.exception("Face detection failed")

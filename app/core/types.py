@@ -32,6 +32,14 @@ class RawFace:
     far: bool = False  # too small to read: a box and points only, with empty scores
 
 
+class FarDetectFailed(Exception):
+    """Finding far faces failed. The near faces were found and are carried here."""
+
+    def __init__(self, near: list[RawFace]):
+        super().__init__("Far face detection failed")
+        self.near = near
+
+
 @dataclass(frozen=True)
 class Signals:
     eye_closure: float

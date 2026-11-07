@@ -79,6 +79,10 @@ class Config:
     frame_finish_grace_ms: int = 1000
     # far faces
     far_confirm_frames: int = 5  # frames in a row before a far face shows at all
+    far_score_at: float = 0.7
+    far_min_width_px: int = 16
+    far_max_width_px: int = 100  # wider is a near face MediaPipe lost, not someone far away
+    far_same_face_overlap: float = 0.5  # share of the smaller box that makes two boxes one face
 
 
 CONFIG = Config()
