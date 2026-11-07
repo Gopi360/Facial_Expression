@@ -97,3 +97,49 @@ def test_going_normal_while_hidden_rearms():
     assert not p.update("A", False, 1100, visible=False)
     assert not p.update("A", True, 1200)
     assert p.update("A", True, 2200)
+
+
+def test_drop_says_a_snap_is_owed_when_seen_red_for_the_limit_with_none_taken():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    p.update("A", True, 900)
+    assert not p.update("A", True, 1000, visible=False)
+    assert not p.update("A", True, 1100, visible=False)
+    assert p.drop("A")
+
+
+def test_drop_owes_nothing_for_under_the_limit():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    p.update("A", True, 300)
+    p.update("A", True, 400, visible=False)
+    assert not p.drop("A")
+
+
+def test_drop_owes_nothing_after_a_snap_fired():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    assert p.update("A", True, 1000)
+    p.update("A", True, 1100, visible=False)
+    assert not p.drop("A")
+
+
+def test_drop_owes_nothing_for_an_unknown_letter():
+    assert not SnapPolicy().drop("A")
+
+
+def test_a_long_gap_before_hiding_is_not_red_time_seen():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    p.update("A", True, 900)
+    p.update("A", True, 1500, visible=False)
+    assert not p.drop("A")
+
+
+def test_time_hidden_owes_nothing():
+    p = SnapPolicy()
+    p.update("A", True, 0)
+    p.update("A", True, 500)
+    for t in range(600, 2500, 100):
+        p.update("A", True, t, visible=False)
+    assert not p.drop("A")

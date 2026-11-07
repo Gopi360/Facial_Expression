@@ -384,6 +384,48 @@ def test_hidden_red_person_takes_no_snap(rig):
     assert rig.snaps() == []
 
 
+def test_seen_red_for_the_limit_then_lost_saves_the_last_visible_frame(rig, monkeypatch):
+    seen = []
+    real = pipeline_module.render_snap
+
+    def spy(frame, people):
+        seen.append((frame.shape, [(p.letter, p.visible) for p in people]))
+        return real(frame, people)
+
+    monkeypatch.setattr(pipeline_module, "render_snap", spy)
+    small = cv2.imencode(".jpg", np.zeros((32, 32, 3), np.uint8))[1].tobytes()
+    rig.first_red_frame()
+    rig.run(CONFIG.min_red_ms - 2 * STEP_MS, face(1, closed=True))
+    last_seen_ms = rig.t
+    rig.frame(jpeg=small)
+    rig.run(CONFIG.letter_release_ms - STEP_MS)
+    assert rig.snaps() == []  # never while they are only in grace
+    rig.run(3 * STEP_MS)
+    assert rig.result.people == []
+    assert seen == [((32, 32, 3), [("A", True)])]
+    snaps = rig.snaps()
+    assert len(snaps) == 1
+    assert f"_{at(last_seen_ms):%H-%M-%S}_A_sleeping.jpg" in snaps[0].name
+    assert f"snaps/{snaps[0].name}" in rig.log_text()
+
+
+def test_lost_after_red_for_under_the_limit_takes_no_snap_but_keeps_the_log_line(rig):
+    """The flicker rule: a red mark this short has no proof, and the README says so."""
+    rig.first_red_frame()
+    rig.run(300, face(1, closed=True))
+    rig.run(CONFIG.letter_release_ms + 500)
+    assert rig.snaps() == []
+    assert "fell asleep" in rig.log_text()
+
+
+def test_kept_frame_is_forgotten_when_the_person_stops_being_red(rig):
+    rig.first_red_frame()
+    rig.run(1000, face(1))
+    rig.run(CONFIG.letter_release_ms + 500)
+    assert rig.snaps() == []
+    assert rig.pipe._red_proof == {}
+
+
 def test_one_red_frame_then_finder_failure_takes_no_snap(rig):
     rig.first_red_frame()
     rig.finder.error = RuntimeError("detector broke")

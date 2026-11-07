@@ -60,6 +60,16 @@ class _PersonState:
     reading: Reading | None = None
 
 
+@dataclass
+class _RedProof:
+    """The last frame that showed a red person, ready to save if they are lost before a snap."""
+
+    frame: np.ndarray
+    people: list[Person]
+    person: Person
+    at: datetime
+
+
 def _decode(jpeg: bytes) -> tuple[np.ndarray | None, str | None]:
     if not jpeg:
         return None, EMPTY_FRAME_WARNING
@@ -130,6 +140,7 @@ class Pipeline:
         self._signature_failed_ms: dict[int, float] = {}
         self._signature_tried_ms: dict[int, float] = {}
         self._labels: dict[str, str] = {}
+        self._red_proof: dict[str, _RedProof] = {}
         self._alarm = False
         self._log: list[str] = []
         self._frame: np.ndarray | None = None
@@ -339,7 +350,14 @@ class Pipeline:
         events = [_shown_event(e) for e in diff_events(self._labels, readings, at)]
         for key in self._labels:
             if key not in present:
-                self._snaps.drop(key)
+                owed = self._snaps.drop(key)
+                proof = self._red_proof.pop(key, None)
+                if owed and proof is not None:
+                    events.append(
+                        self._snap_event(
+                            proof.frame, proof.people, proof.person, proof.at, at, warnings
+                        )
+                    )
         self._labels = {key: r.label for key, r in readings.items()}
 
         alarm = should_sound(self._labels.values())
@@ -348,17 +366,32 @@ class Pipeline:
         self._alarm = alarm
 
         for key, person in present.items():
-            label = person.reading.label
-            if not self._snaps.update(key, is_red(label), now_ms, person.visible):
-                continue
-            who = f"Person {person.letter}"
-            path, warning = self._save_snap(frame, people, at, person.letter, label)
-            if warning:
-                warnings.append(warning)
-                events.append(LogEvent(at, who, "snap failed"))
-            else:
-                events.append(LogEvent(at, who, label, person.reading.confidence, path))
+            red = is_red(person.reading.label)
+            if self._snaps.update(key, red, now_ms, person.visible):
+                events.append(self._snap_event(frame, people, person, at, at, warnings))
+            if not red:
+                self._red_proof.pop(key, None)
+            elif person.visible:
+                self._red_proof[key] = _RedProof(frame, people, person, at)
         return events
+
+    def _snap_event(
+        self,
+        frame: np.ndarray,
+        people: list[Person],
+        person: Person,
+        shown_at: datetime,
+        at: datetime,
+        warnings: list[str],
+    ) -> LogEvent:
+        """Save a red person's snap, named for when the frame was seen. Logged as of at."""
+        who = f"Person {person.letter}"
+        label = person.reading.label
+        path, warning = self._save_snap(frame, people, shown_at, person.letter, label)
+        if warning:
+            warnings.append(warning)
+            return LogEvent(at, who, "snap failed")
+        return LogEvent(at, who, label, person.reading.confidence, path)
 
     def _save_snap(
         self, frame: np.ndarray, people: list[Person], at: datetime, letter: str, reason: str
