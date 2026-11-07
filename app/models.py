@@ -82,6 +82,8 @@ class FaceFinder:
         self._yunet = cv2.FaceDetectorYN.create(
             far_path, "", (CONFIG.frame_width, CONFIG.frame_height), CONFIG.far_score_at
         )
+        self._far_rows: np.ndarray | None = None  # YuNet's last results, for the frames between
+        self._far_frames = 0
 
     def find(self, frame_bgr: np.ndarray) -> list[RawFace]:
         h, w = frame_bgr.shape[:2]
@@ -109,10 +111,19 @@ class FaceFinder:
         return faces + self._find_far(frame_bgr, faces)
 
     def _find_far(self, frame_bgr: np.ndarray, near: list[RawFace]) -> list[RawFace]:
+        """Every frame takes a look at the last results against this frame's near faces, but
+        YuNet itself runs less often, because on this laptop its time comes out of everyone's
+        frame rate, and the sleep rules need that rate.
+        """
         h, w = frame_bgr.shape[:2]
+        due = self._far_frames % CONFIG.far_every_frames == 0
+        self._far_frames += 1
         try:
-            self._yunet.setInputSize((w, h))
-            return _far_faces(self._yunet.detect(frame_bgr)[1], near, w, h)
+            if due:
+                self._far_rows = None
+                self._yunet.setInputSize((w, h))
+                self._far_rows = self._yunet.detect(frame_bgr)[1]
+            return _far_faces(self._far_rows, near, w, h)
         except Exception as e:
             raise FarDetectFailed(near) from e
 

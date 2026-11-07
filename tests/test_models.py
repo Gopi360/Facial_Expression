@@ -191,20 +191,67 @@ def test_a_face_both_models_find_is_one_near_face():
     assert [face.far for face in faces] == [False]
 
 
+class FakeYunet:
+    def __init__(self, *results):
+        self.results = list(results)
+        self.calls = 0
+
+    def setInputSize(self, size):
+        pass
+
+    def detect(self, frame):
+        self.calls += 1
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return 1, result
+
+
+def finder_on(yunet) -> FaceFinder:
+    """Far detection alone. A real landmarker held by a traceback hangs pytest at the end."""
+    finder = FaceFinder.__new__(FaceFinder)
+    finder._yunet = yunet
+    finder._far_rows = None
+    finder._far_frames = 0
+    return finder
+
+
+BLANK = np.zeros((H, W, 3), np.uint8)
+ONE_FAR = np.array([row(320, 240, 32)], np.float32)
+
+
 def test_far_model_failure_keeps_the_near_faces():
-    class Broken:
-        def setInputSize(self, size):
-            pass
-
-        def detect(self, frame):
-            raise cv2.error("broke")
-
-    finder = FaceFinder.__new__(FaceFinder)  # a real landmarker held by a traceback hangs pytest
-    finder._yunet = Broken()
     near = [near_face(100, 100, 90, 110)]
     with pytest.raises(FarDetectFailed) as failure:
-        finder._find_far(np.zeros((H, W, 3), np.uint8), near)
+        finder_on(FakeYunet(cv2.error("broke")))._find_far(BLANK, near)
     assert failure.value.near == near
+
+
+def test_far_model_runs_on_every_second_frame_and_its_faces_are_reused():
+    assert CONFIG.far_every_frames == 2
+    yunet = FakeYunet(ONE_FAR, None)
+    finder = finder_on(yunet)
+    assert len(finder._find_far(BLANK, [])) == 1
+    assert yunet.calls == 1
+    assert len(finder._find_far(BLANK, [])) == 1  # reused
+    assert yunet.calls == 1
+    assert finder._find_far(BLANK, []) == []
+    assert yunet.calls == 2
+
+
+def test_a_reused_far_face_gives_way_to_a_near_face_found_since():
+    finder = finder_on(FakeYunet(ONE_FAR))
+    assert len(finder._find_far(BLANK, [])) == 1
+    assert finder._find_far(BLANK, [near_face(300, 220, 90, 110)]) == []
+
+
+def test_faces_from_before_a_far_model_failure_are_not_reused():
+    finder = finder_on(FakeYunet(ONE_FAR, cv2.error("broke")))
+    finder._find_far(BLANK, [])
+    finder._find_far(BLANK, [])
+    with pytest.raises(FarDetectFailed):
+        finder._find_far(BLANK, [])
+    assert finder._find_far(BLANK, []) == []
 
 
 @pytest.mark.models
