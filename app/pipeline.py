@@ -316,7 +316,7 @@ class Pipeline:
         self, frame: np.ndarray, tracked: dict[int, RawFace], now_ms: float, warnings: list[str]
     ) -> None:
         """At most one signature or emotion call, which keeps the frame cost bounded."""
-        wanting = [tid for tid in tracked if self._wants_signature(tid, now_ms)]
+        wanting = [tid for tid, face in tracked.items() if self._wants_signature(tid, face, now_ms)]
         if wanting:
             # A face with no letter wants one on every frame, so take turns.
             track_id = min(wanting, key=lambda t: self._signature_tried_ms.get(t, -math.inf))
@@ -336,12 +336,16 @@ class Pipeline:
             state, face = min(due, key=lambda pair: pair[0].emotion_tried_ms)
             self._read_emotion(frame, state, face, now_ms, warnings)
 
-    def _wants_signature(self, track_id: int, now_ms: float) -> bool:
-        """A face that just failed waits its turn, or it would block everyone behind it."""
-        failed_ms = self._signature_failed_ms.get(track_id, -math.inf)
+    def _wants_signature(self, track_id: int, face: RawFace, now_ms: float) -> bool:
+        """A face that just failed waits its turn, or it would block everyone behind it. So does
+        a far face, whose view can't decide much, or it would take the near people's emotion turns.
+        """
+        waiting_from = self._signature_failed_ms.get(track_id, -math.inf)
+        if face.far:
+            waiting_from = max(waiting_from, self._signature_tried_ms.get(track_id, -math.inf))
         return (
             self._identity.needs_signature(track_id, now_ms)
-            and now_ms - failed_ms >= CONFIG.identity_interval_ms
+            and now_ms - waiting_from >= CONFIG.identity_interval_ms
         )
 
     def _sign(

@@ -90,6 +90,30 @@ def test_no_signature_for_2_seconds_gets_next_letter():
     assert ident.letter_for(1) == "A"
 
 
+def test_a_short_miss_does_not_restart_the_wait_for_a_letter():
+    ident = Identity()
+    seen(ident, {1}, 0)
+    ident.sync(set(), {1}, CONFIG.identity_pending_ms - 100)
+    assert ident.letter_for(1) is None
+    seen(ident, {1}, CONFIG.identity_pending_ms)
+    assert ident.letter_for(1) == "A"
+
+
+def test_a_miss_as_long_as_the_release_time_restarts_the_wait():
+    ident = Identity()
+    seen(ident, {1}, 0)
+    ident.sync(set(), {1}, CONFIG.letter_release_ms)
+    seen(ident, {1}, CONFIG.letter_release_ms + 100)
+    assert ident.letter_for(1) is None
+
+
+def test_no_letter_is_given_while_out_of_view():
+    ident = Identity()
+    seen(ident, {1}, 0)
+    ident.sync(set(), {1}, CONFIG.identity_pending_ms + 100)
+    assert ident.letter_for(1) is None
+
+
 def test_after_z_letter_is_question_mark():
     ident = Identity()
     for i in range(27):

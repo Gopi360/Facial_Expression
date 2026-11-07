@@ -566,6 +566,38 @@ def test_wall_picture_uncovered_as_a_leaves_cannot_keep_their_letter(rig):
     assert list(rig.pipe._identity._signatures) == ["A"]
 
 
+def beside_a_far_face_with_misses(rig, period):
+    """Emotion calls for a near person over 300 frames, beside a far face missing 2 in period."""
+    rig.run(3000, face(1))
+    before = len(rig.emotion.calls)
+    for i in range(300):
+        missed = period and i % period in (0, 1)
+        rig.finder.faces = [face(1)] if missed else [face(1), far(2, x=0.7)]
+        rig.frame()
+    return len(rig.emotion.calls) - before
+
+
+@pytest.mark.parametrize("period", [12, 16, 20])
+def test_intermittent_far_face_gets_a_letter_and_does_not_starve_near_people(tmp_path, period):
+    clean = beside_a_far_face_with_misses(Rig(tmp_path / "clean"), 0)
+    rig = Rig(tmp_path / "flicker")
+    calls = beside_a_far_face_with_misses(rig, period)
+    assert calls >= 0.8 * clean
+    assert rig.pipe._identity.people_count() == 2
+    assert "| Person B | joined" in rig.log_text()
+
+
+def test_far_face_with_no_letter_is_signed_only_at_the_identity_interval(rig):
+    confirm_far(rig, far())
+    rig.run(1500, far())
+    assert len(rig.signer.calls) == 2
+
+
+def test_near_face_with_no_letter_is_still_signed_on_every_frame(rig):
+    rig.run(500, face(1, yaw=CONFIG.frontal_yaw_deg + 1))
+    assert len(rig.signer.calls) == 5
+
+
 def test_far_view_strips_nothing_and_stores_nothing(rig):
     rig.run(5000, face(1))
     store = rig.pipe._identity._signatures["A"]

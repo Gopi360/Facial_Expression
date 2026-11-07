@@ -1,6 +1,7 @@
 """Session face recognition: who is A, B, C. Signatures live in memory only."""
 from __future__ import annotations
 
+import math
 from collections import deque
 from collections.abc import Collection
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ UNKNOWN = "?"
 @dataclass
 class _TrackState:
     first_seen_ms: float
+    last_visible_ms: float = -math.inf
     letter: str | None = None
     last_signature_ms: float | None = None
     mismatches: int = 0  # checks in a row that failed this letter's anchors
@@ -106,10 +108,14 @@ class Identity:
         for tid in [t for t in self._tracks if t not in active_ids]:
             del self._tracks[tid]
         for tid, t in self._tracks.items():
+            if tid in self._visible:
+                t.last_visible_ms = now_ms
             if t.letter is not None:
                 continue
             if tid not in self._visible:
-                t.first_seen_ms = now_ms  # the pending clock only runs while visible
+                # A small far face flickers, and restarting on each miss would never end.
+                if now_ms - t.last_visible_ms >= CONFIG.letter_release_ms:
+                    t.first_seen_ms = now_ms
             elif now_ms - t.first_seen_ms >= CONFIG.identity_pending_ms:
                 t.letter = self._take_next_letter()
 
