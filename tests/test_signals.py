@@ -3,6 +3,7 @@ import math
 
 import pytest
 
+from app.core.config import CONFIG
 from app.core.signals import Baseline, angles_from_matrix
 from app.core.types import Box, RawFace
 
@@ -179,3 +180,51 @@ def test_pitch_delta_is_measured_from_the_persons_normal_pitch():
     assert baseline.to_signals(face(0.1, 10), 0).pitch_delta == 0
     feed(baseline, face(0.1, 10), 66, 2500)
     assert baseline.to_signals(face(0.1, 28), 2500).pitch_delta == close(18)
+
+
+def turned_face(raw_closure: float, pitch_deg: float, yaw_deg: float) -> RawFace:
+    found = face(raw_closure, pitch_deg)
+    found.yaw_deg = yaw_deg
+    return found
+
+
+def settled_baseline(pitch_deg: float = 10) -> Baseline:
+    baseline = Baseline()
+    feed(baseline, face(0.1, pitch_deg), 0, 2500)
+    return baseline
+
+
+def test_frontal_view_is_near_the_persons_normal_pitch_not_level():
+    baseline = settled_baseline(pitch_deg=10)
+    assert baseline.is_frontal(face(0.1, 10))
+    assert baseline.is_frontal(face(0.1, 10 + CONFIG.frontal_pitch_delta_deg))
+    assert baseline.is_frontal(face(0.1, 10 - CONFIG.frontal_pitch_delta_deg))
+    assert not baseline.is_frontal(face(0.1, 10 + CONFIG.frontal_pitch_delta_deg + 1))
+    assert not baseline.is_frontal(face(0.1, 10 - CONFIG.frontal_pitch_delta_deg - 1))
+
+
+def test_frontal_view_needs_open_eyes_against_the_persons_own_normal():
+    baseline = Baseline()
+    feed(baseline, face(0.4), 0, 2500)
+    # (0.7 - 0.4) / 0.6 is 0.5, under eyes_closed_at, though 0.7 is over it raw.
+    assert baseline.is_frontal(face(0.7))
+    assert not baseline.is_frontal(face(0.9))
+
+
+def test_frontal_view_still_limits_yaw():
+    baseline = settled_baseline(pitch_deg=0)
+    assert baseline.is_frontal(turned_face(0.1, 0, CONFIG.frontal_yaw_deg))
+    assert not baseline.is_frontal(turned_face(0.1, 0, CONFIG.frontal_yaw_deg + 1))
+
+
+def test_frontal_view_with_no_baseline_judges_eyes_and_yaw_only():
+    baseline = Baseline()
+    assert baseline.is_frontal(face(0.1, 40))
+    assert not baseline.is_frontal(face(0.9, 0))
+
+
+def test_judging_a_view_does_not_feed_the_baseline():
+    baseline = Baseline()
+    for t in range(20):
+        baseline.is_frontal(face(0.1, 40))
+    assert baseline.normal() is None

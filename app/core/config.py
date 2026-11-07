@@ -59,8 +59,11 @@ class Config:
     identity_interval_ms: int = 1000
     identity_match_at: float = 0.363
     identity_pending_ms: int = 2000
-    identity_max_signatures: int = 5
+    identity_max_signatures: int = 5  # rolling slots, on top of the anchors
+    identity_anchor_signatures: int = 3  # first good views, kept for the whole session
+    identity_mismatch_checks: int = 2  # frontal checks in a row that must fail to lose a letter
     frontal_yaw_deg: float = 20
+    frontal_pitch_delta_deg: float = 12
     min_red_ms: int = 1000
     jpeg_max_bytes: int = 2000000
     overlay_line_frac: float = 0.003

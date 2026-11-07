@@ -30,6 +30,10 @@ def _pair_average(scores: dict[str, float], name: str) -> float:
     return (scores.get(f"{name}Left", 0.0) + scores.get(f"{name}Right", 0.0)) / 2
 
 
+def raw_eye_closure(face: RawFace) -> float:
+    return _pair_average(face.scores, "eyeBlink")
+
+
 def _percentile(values: Sequence[float], fraction: float) -> float:
     ordered = sorted(values)
     return ordered[math.floor(fraction * (len(ordered) - 1))]
@@ -58,15 +62,37 @@ class Baseline:
         self._recent: list[_Sample] = []  # every sample in the last baseline_max_wait_ms
         self._frozen: _Normal | None = None
 
+    def normal(self) -> _Normal | None:
+        """The frozen normal, or None while it is still being learned."""
+        return self._frozen
+
+    def is_frontal(self, face: RawFace) -> bool:
+        """A view good enough to recognise this person by: facing the camera, eyes open and
+        head near their normal pitch. With no normal yet, pitch cannot be judged. Learns nothing.
+        """
+        frozen = self._frozen
+        pitch_ok = (
+            frozen is None
+            or abs(face.pitch_deg - frozen.pitch) <= CONFIG.frontal_pitch_delta_deg
+        )
+        return (
+            abs(face.yaw_deg) <= CONFIG.frontal_yaw_deg
+            and self._closure(raw_eye_closure(face)) < CONFIG.eyes_closed_at
+            and pitch_ok
+        )
+
+    def _closure(self, raw_closure: float) -> float:
+        base_closure = self._frozen.closure if self._frozen is not None else 0.0
+        return clamp01((raw_closure - base_closure) / (1 - base_closure))
+
     def to_signals(self, face: RawFace, now_ms: float) -> Signals:
-        raw_closure = _pair_average(face.scores, "eyeBlink")
+        raw_closure = raw_eye_closure(face)
         if self._frozen is None:
             self._collect(raw_closure, face.pitch_deg, now_ms)
 
         frozen = self._frozen
-        base_closure = frozen.closure if frozen is not None else 0.0
         return Signals(
-            eye_closure=clamp01((raw_closure - base_closure) / (1 - base_closure)),
+            eye_closure=self._closure(raw_closure),
             look_down=_pair_average(face.scores, "eyeLookDown"),
             pitch_delta=face.pitch_deg - frozen.pitch if frozen is not None else 0.0,
             smile=_pair_average(face.scores, "mouthSmile"),

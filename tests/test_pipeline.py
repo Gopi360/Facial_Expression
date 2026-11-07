@@ -20,10 +20,20 @@ def at(ms):
     return START + timedelta(milliseconds=ms)
 
 
-def face(marker=1, x=0.1, closed=False, yaw=0.0):
-    blink = 0.95 if closed else 0.05
+def face(marker=1, x=0.1, closed=False, yaw=0.0, pitch=0.0, blink=None, signature=None):
+    blink = (0.95 if closed else 0.05) if blink is None else blink
     scores = {"eyeBlinkLeft": blink, "eyeBlinkRight": blink, "marker": marker}
-    return RawFace(Box(x, 0.1, 0.2, 0.2), scores, 0.0, yaw, [(0.0, 0.0)] * 5)
+    found = RawFace(Box(x, 0.1, 0.2, 0.2), scores, pitch, yaw, [(0.0, 0.0)] * 5)
+    found.signature = signature
+    return found
+
+
+def between(first, second, turn):
+    """A signature part way from one marker's to another's: 0 is first, 1 is second."""
+    vector = np.zeros(SIGNATURE_SIZE)
+    vector[first] = np.cos(turn * np.pi / 2)
+    vector[second] = np.sin(turn * np.pi / 2)
+    return vector
 
 
 class FakeFinder:
@@ -63,6 +73,8 @@ class FakeSigner:
         self.calls.append(marker)
         if marker in self.failing:
             raise ValueError("no signature")
+        if f.signature is not None:
+            return f.signature
         vector = np.zeros(SIGNATURE_SIZE)
         vector[marker] = 1.0
         return vector
@@ -154,8 +166,83 @@ def test_new_track_as_the_old_one_vanishes_takes_the_letter(rig):
 def test_side_view_does_not_store_a_signature(rig):
     rig.run(100, face(1, yaw=CONFIG.frontal_yaw_deg + 1))
     assert rig.pipe._identity._signatures == {}
-    rig.run(CONFIG.identity_interval_ms + 100, face(1, yaw=-CONFIG.frontal_yaw_deg))
+    rig.run(STEP_MS, face(1, yaw=-CONFIG.frontal_yaw_deg))
     assert len(rig.pipe._identity._signatures["A"]) == 1
+
+
+def doze(rig, marker=1, asleep_marker=9):
+    """10s upright, then a gradual droop, each view a little less like the last person."""
+    rig.run(10000, face(marker))
+    steps = 15
+    for step in range(1, steps + 1):
+        turned = between(marker, asleep_marker, step / steps)
+        rig.run(500, face(marker, pitch=2.5 * step, blink=0.3, signature=turned))
+    rig.run(7000, face(marker, pitch=2.5 * steps, closed=True, signature=vector_of(asleep_marker)))
+
+
+def vector_of(marker):
+    return between(marker, marker + 1, 0)
+
+
+def test_dozing_does_not_cost_a_person_their_letter(rig):
+    doze(rig)
+    rig.run(5000, face(1))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+    rig.run(10000)
+    rig.run(1000, face(1))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
+def test_head_down_and_closed_eye_views_are_not_learned(rig):
+    rig.run(5000, face(1))
+    store = rig.pipe._identity._signatures["A"]
+    learned = len(store)
+    head_down = face(1, pitch=CONFIG.frontal_pitch_delta_deg + 1)
+    rig.run(3000, head_down)
+    assert len(store) == learned
+    rig.run(3000, face(1, blink=0.9))
+    assert len(store) == learned
+
+
+def test_first_anchors_need_open_eyes(rig):
+    rig.run(1500, face(1, closed=True))
+    assert "A" not in rig.pipe._identity._signatures
+    rig.run(1500, face(1))
+    assert len(rig.pipe._identity._signatures["A"].anchors) >= 1
+
+
+def test_head_down_view_of_someone_dozing_does_not_strip_their_letter(rig):
+    rig.run(5000, face(1))
+    rig.run(5000, face(1, pitch=30, signature=vector_of(9)))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+
+
+def test_return_turned_then_frontal_keeps_the_letter(rig):
+    rig.run(3000, face(1))
+    rig.run(10000)
+    turned = between(1, 9, 0.9)
+    rig.run(300, face(1, yaw=CONFIG.frontal_yaw_deg + 25, signature=turned))
+    assert rig.result.lines == ["Identifying..."]
+    rig.run(500, face(1))
+    assert [p["letter"] for p in rig.result.people] == ["A"]
+    assert "Person B" not in rig.log_text()
+
+
+def test_stranger_in_the_seat_gets_their_own_letter_and_a_comes_back(rig):
+    rig.run(5000, face(1))
+    rig.run(1500)
+    rig.run(3000, face(2))
+    assert [p["letter"] for p in rig.result.people] == ["B"]
+    assert "| Person A | left" in rig.log_text()
+    rig.run(500, face(2), face(1, x=0.7))
+    assert [p["letter"] for p in rig.result.people] == ["A", "B"]
+    assert rig.result.people[0]["box"]["x"] == 0.7
+
+
+def test_two_waiting_faces_both_get_their_signature_turn(rig):
+    turned = CONFIG.frontal_yaw_deg + 1
+    rig.run(300, face(1, x=0.1, yaw=turned), face(2, x=0.6, yaw=turned))
+    assert set(rig.signer.calls) == {1, 2}
 
 
 def test_people_past_z_show_as_unknown_and_keep_separate_state(rig):

@@ -128,6 +128,7 @@ class Pipeline:
         self._debug_buffer = DebugBuffer()
         self._people: dict[str, _PersonState] = {}  # by state key, never deleted
         self._signature_failed_ms: dict[int, float] = {}
+        self._signature_tried_ms: dict[int, float] = {}
         self._labels: dict[str, str] = {}
         self._alarm = False
         self._log: list[str] = []
@@ -213,10 +214,13 @@ class Pipeline:
         self, frame: np.ndarray, tracked: dict[int, RawFace], now_ms: float, warnings: list[str]
     ) -> None:
         """At most one signature or emotion call, which keeps the frame cost bounded."""
-        for track_id, face in tracked.items():
-            if self._wants_signature(track_id, now_ms):
-                self._sign(frame, track_id, face, now_ms, warnings)
-                return
+        wanting = [tid for tid in tracked if self._wants_signature(tid, now_ms)]
+        if wanting:
+            # A face with no letter wants one on every frame, so take turns.
+            track_id = min(wanting, key=lambda t: self._signature_tried_ms.get(t, -math.inf))
+            self._signature_tried_ms[track_id] = now_ms
+            self._sign(frame, track_id, tracked[track_id], now_ms, warnings)
+            return
 
         due = []
         for track_id, face in tracked.items():
@@ -253,8 +257,14 @@ class Pipeline:
             self._signature_failed_ms[track_id] = now_ms
             warnings.append(FACE_WARNING)
             return
-        frontal = abs(face.yaw_deg) <= CONFIG.frontal_yaw_deg
-        self._identity.add_signature(track_id, signature, frontal, now_ms)
+        self._identity.add_signature(
+            track_id, signature, self._is_frontal(track_id, face), now_ms
+        )
+
+    def _is_frontal(self, track_id: int, face: RawFace) -> bool:
+        """Judged against the person's own normal once the track has a letter and they have one."""
+        state = self._people.get(self._identity.state_key(track_id))
+        return (state.baseline if state else Baseline()).is_frontal(face)
 
     def _read_emotion(
         self,

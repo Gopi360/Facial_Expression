@@ -10,6 +10,24 @@ def vec(i: int, n: int = 40) -> np.ndarray:
     return v
 
 
+def near(i: int, j: int, lean: float = 0.3) -> np.ndarray:
+    """Mostly person i, with a little of something else."""
+    return vec(i) + lean * vec(j)
+
+
+def blend(i: int, j: int, turn: float) -> np.ndarray:
+    """turn 0 is all of i, turn 1 is all of j, moving smoothly between."""
+    angle = turn * np.pi / 2
+    return np.cos(angle) * vec(i) + np.sin(angle) * vec(j)
+
+
+def lettered(ident: Identity, track: int, i: int, now: float = 0) -> None:
+    """Puts a person on a track and fills their anchors with clean frontal views."""
+    ident.sync({track}, {track}, now)
+    for k in range(CONFIG.identity_anchor_signatures):
+        ident.add_signature(track, vec(i), True, now + k)
+
+
 def seen(ident: Identity, ids: set[int], now: float, active: set[int] | None = None):
     ident.sync(ids, active if active is not None else ids, now)
 
@@ -99,28 +117,29 @@ def test_side_view_signature_is_not_stored():
     ident = Identity()
     seen(ident, {1}, 0)
     ident.add_signature(1, vec(0), False, 0)
-    assert ident.letter_for(1) == "A"  # first signature still decides a letter
+    assert ident.letter_for(1) is None  # a side view cannot create a letter
+    seen(ident, {1}, CONFIG.identity_pending_ms)
+    assert ident.letter_for(1) == "A"
+    ident.add_signature(1, vec(0), False, CONFIG.identity_pending_ms)
     seen(ident, set(), 3000, active=set())
     seen(ident, {2}, 3100)
     ident.add_signature(2, vec(0), True, 3100)
     assert ident.letter_for(2) == "B"  # nothing stored for A
 
 
-def test_stored_signatures_are_capped():
+def test_rolling_signatures_are_capped_and_anchors_stay():
     ident = Identity()
     seen(ident, {1}, 0)
-    first = (vec(0) + vec(1)) / np.sqrt(2)
-    ident.add_signature(1, first, True, 0)
-    for k in range(CONFIG.identity_max_signatures + 2):
-        ident.add_signature(1, vec(1) + 0.05 * vec(k + 2), True, k + 1)
-    seen(ident, set(), 9000, active=set())
-    seen(ident, {2}, 9100)
-    ident.add_signature(2, vec(0), True, 9100)  # only matched the dropped first
-    assert ident.letter_for(2) != "A"
-    seen(ident, set(), 20000, active=set())
-    seen(ident, {3}, 20100)
-    ident.add_signature(3, vec(1) + 0.05 * vec(2), True, 20100)
-    assert ident.letter_for(3) == "A"
+    for k in range(CONFIG.identity_anchor_signatures):
+        ident.add_signature(1, near(0, k + 1), True, k)
+    first_rolling = near(0, 20)
+    ident.add_signature(1, first_rolling, True, 10)
+    for k in range(CONFIG.identity_max_signatures):
+        ident.add_signature(1, near(0, k + 21), True, 11 + k)
+    store = ident._signatures["A"]
+    assert len(store.anchors) == CONFIG.identity_anchor_signatures
+    assert len(store.rolling) == CONFIG.identity_max_signatures
+    assert not any(np.array_equal(first_rolling, s) for s in store.rolling)
 
 
 def test_lettered_track_never_flips_to_another_letter():
@@ -199,3 +218,153 @@ def test_needs_signature_rules():
     ident.add_signature(1, vec(0), True, 0)
     assert not ident.needs_signature(1, 500)
     assert ident.needs_signature(1, CONFIG.identity_interval_ms)
+
+
+# -- permanent anchors ---------------------------------------------------
+
+
+def test_first_good_views_become_anchors():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    store = ident._signatures["A"]
+    assert len(store.anchors) == CONFIG.identity_anchor_signatures
+    assert len(store.rolling) == 0
+
+
+def test_a_slow_change_cannot_walk_the_store_away_from_the_anchors():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    for step in range(1, 21):
+        ident.add_signature(1, blend(0, 1, step / 20), True, 10 + step)
+    store = ident._signatures["A"]
+    assert all(np.dot(s, vec(0)) >= CONFIG.identity_match_at for s in store.rolling)
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {2}, 9100)
+    ident.add_signature(2, vec(0), True, 9100)
+    assert ident.letter_for(2) == "A"
+
+
+def test_matching_a_return_also_uses_rolling_signatures():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.add_signature(1, blend(0, 1, 0.6), True, 10)  # still like the anchors, stored rolling
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {2}, 9100)
+    ident.add_signature(2, vec(1), True, 9100)  # like the rolling view only
+    assert ident.letter_for(2) == "A"
+
+
+# -- a letter is decided by a frontal view -------------------------------
+
+
+def test_return_turned_then_frontal_keeps_the_letter():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {2}, 9100)
+    ident.add_signature(2, blend(0, 5, 0.9), False, 9100)  # too turned to match
+    assert ident.letter_for(2) is None
+    assert ident.needs_signature(2, 9101)
+    seen(ident, {2}, 9400)
+    ident.add_signature(2, vec(0), True, 9400)
+    assert ident.letter_for(2) == "A"
+    assert ident.people_count() == 1
+
+
+def test_a_side_view_can_match_a_known_letter():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {2}, 9100)
+    ident.add_signature(2, near(0, 5), False, 9100)
+    assert ident.letter_for(2) == "A"
+
+
+def test_stranger_seen_frontal_gets_a_new_letter_at_once():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    seen(ident, {1, 2}, 100)
+    ident.add_signature(2, vec(1), True, 100)
+    assert ident.letter_for(2) == "B"
+
+
+def test_person_turned_for_the_whole_wait_gets_a_new_letter():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {2}, 9100)
+    for t in range(9100, 9100 + CONFIG.identity_pending_ms, 100):
+        seen(ident, {2}, t)
+        ident.add_signature(2, vec(3), False, t)
+        assert ident.letter_for(2) is None
+    seen(ident, {2}, 9100 + CONFIG.identity_pending_ms)
+    assert ident.letter_for(2) == "B"
+
+
+def test_letter_from_the_wait_gives_way_when_the_face_turns_out_to_be_known():
+    """That letter has never seen a frontal view, so nothing says it is anyone."""
+    ident = Identity()
+    lettered(ident, 1, 0)
+    seen(ident, set(), 9000, active=set())
+    seen(ident, {2}, 9100)
+    seen(ident, {2}, 9100 + CONFIG.identity_pending_ms)
+    assert ident.letter_for(2) == "B"
+    ident.add_signature(2, vec(0), True, 11200)
+    assert ident.letter_for(2) == "A"
+
+
+# -- a track that stops looking like its letter --------------------------
+
+
+def test_stranger_on_the_track_loses_the_letter_and_a_returns_as_a():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.add_signature(1, vec(1), True, 1000)
+    assert ident.letter_for(1) == "A"
+    ident.add_signature(1, vec(1), True, 2000)
+    assert ident.letter_for(1) == "B"
+    ident.sync({1, 2}, {1, 2}, 2100)
+    ident.add_signature(2, vec(0), True, 2100)
+    assert ident.letter_for(2) == "A"
+    assert ident.letter_for(1) == "B"
+
+
+def test_one_bad_frontal_check_strips_nothing():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.add_signature(1, vec(1), True, 1000)
+    ident.add_signature(1, vec(0), True, 2000)
+    ident.add_signature(1, vec(1), True, 3000)
+    assert ident.letter_for(1) == "A"
+
+
+def test_side_views_are_not_mismatch_checks():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    for t in (1000, 2000, 3000):
+        ident.add_signature(1, vec(1), False, t)
+    assert ident.letter_for(1) == "A"
+
+
+def test_people_who_cross_get_their_own_letters_back():
+    ident = Identity()
+    ident.sync({1, 2}, {1, 2}, 0)
+    for k in range(CONFIG.identity_anchor_signatures):
+        ident.add_signature(1, vec(0), True, k)
+        ident.add_signature(2, vec(1), True, k)
+    assert (ident.letter_for(1), ident.letter_for(2)) == ("A", "B")
+    for t in (1000, 2000):  # tracks swapped while crossing
+        ident.add_signature(1, vec(1), True, t)
+        ident.add_signature(2, vec(0), True, t + 1)
+    assert (ident.letter_for(1), ident.letter_for(2)) == ("B", "A")
+    assert ident.people_count() == 2
+
+
+def test_real_person_returning_takes_the_letter_from_a_failing_track():
+    ident = Identity()
+    lettered(ident, 1, 0)
+    ident.add_signature(1, vec(1), True, 1000)  # stranger on the track, one bad check
+    ident.sync({1, 2}, {1, 2}, 1100)
+    ident.add_signature(2, vec(0), True, 1100)
+    assert ident.letter_for(2) == "A"
+    assert ident.letter_for(1) is None
