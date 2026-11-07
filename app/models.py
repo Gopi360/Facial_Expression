@@ -10,7 +10,6 @@ import onnxruntime as ort
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
-from app.core.config import CONFIG
 from app.core.expressions import EMOTIONS
 from app.core.signals import angles_from_matrix
 from app.core.types import Box, RawFace
@@ -75,18 +74,27 @@ def _softmax(x: np.ndarray) -> np.ndarray:
     return e / e.sum()
 
 
+def _padded_crop(frame: np.ndarray, box: Box) -> np.ndarray:
+    """Crop the box widened by 10% of its size on each side, clamped to the frame."""
+    h, w = frame.shape[:2]
+    x0 = max(0, int(round((box.x - 0.1 * box.width) * w)))
+    y0 = max(0, int(round((box.y - 0.1 * box.height) * h)))
+    x1 = min(w, int(round((box.x + 1.1 * box.width) * w)))
+    y1 = min(h, int(round((box.y + 1.1 * box.height) * h)))
+    crop = frame[y0:y1, x0:x1]
+    if crop.size == 0:
+        raise ValueError(f"Face box {box} gives an empty crop in a {w}x{h} frame")
+    return crop
+
+
 class EmotionModel:
     def __init__(self, models_dir: Path):
         path = _require(models_dir, "emotion.onnx")
         self._session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
         self._input = self._session.get_inputs()[0].name
 
-    def scores(self, face_bgr: np.ndarray) -> dict[str, float]:
-        h, w = face_bgr.shape[:2]
-        px, py = int(round(w * 0.1)), int(round(h * 0.1))
-        # Padding beyond the supplied crop is clamped away: the crop is all we have.
-        crop = face_bgr
-        crop = cv2.copyMakeBorder(crop, py, py, px, px, cv2.BORDER_REPLICATE)
+    def scores(self, frame_bgr: np.ndarray, box: Box) -> dict[str, float]:
+        crop = _padded_crop(frame_bgr, box)
         rgb = cv2.cvtColor(cv2.resize(crop, (224, 224)), cv2.COLOR_BGR2RGB)
         x = (rgb.astype(np.float32) / 255.0 - _MEAN) / _STD
         x = np.ascontiguousarray(x.transpose(2, 0, 1)[None])
