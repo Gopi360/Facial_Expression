@@ -14,6 +14,7 @@ This is not a safety device, and not a medical tool. Do not use it to watch driv
 - Gives each person a letter (Person A, Person B...). A person who leaves and comes back during one session keeps their letter.
 - Shows a thin box and a small letter on each face in the camera view. All text goes in the strip under the camera and in the right panel, never on the video.
 - Sleeping and about to sleep turn the box red, show the reason in the log, play an alarm sound and save a snap.
+- Finds faces too far away to read, down to about 16 pixels wide. They get a box and a letter only: no expression, no red mark, no alarm and no snap.
 - Writes one log file per session.
 
 ### How to read the confidence number
@@ -35,7 +36,7 @@ python scripts/setup_models.py
 
 Then open <http://127.0.0.1:8000> in Chrome or Edge, click **Start camera**, and allow the camera.
 
-The setup script downloads about four files into `models/` and skips any already there. It needs the internet once. A line "Model setup failed" means a download failed: check the connection and run it again.
+The setup script downloads five files into `models/` and skips any already there. It needs the internet once. A line "Model setup failed" means a download failed: check the connection and run it again.
 
 To run the tests: `.venv\Scripts\python -m pytest -q`. Tests marked `models` need the downloaded model files.
 
@@ -46,12 +47,12 @@ After `setup_models.py` has run once, the app works with Wi-Fi off. The server l
 ## Using the page
 
 - **Start camera:** begins a session. The sound is unlocked by this click, because browsers block sound until you click.
-- Bottom strip: how many faces are found, and one line per person, such as `Person A is smiling 87%`. A new face shows `Identifying...` until a view facing the camera decides who it is, or for up to 2 seconds if the person stays turned away.
+- Bottom strip: how many faces are found, and one line per person, such as `Person A is smiling 87%`. A new face shows `Identifying...` until a view facing the camera decides who it is, or for up to 2 seconds if the person stays turned away. Someone too far to read shows `Person B is too far to read`, with no percent.
 - **Activity log** (right): label changes, people joining and leaving, red marks, snaps, alarm start and stop.
 - **Alarm:** Mute, Volume, and "Sound after" (1 to 10 seconds, default 3). The delay sets when "sleeping" starts and when the sound starts, but "about to sleep" and head droop can sound before the slider's time.
 - **Snapshot:** saves the current frame by hand.
 - The page always shows "Recording logs and snaps".
-- If more than 4 faces are in view, only the 4 largest are read and the page says "Showing the 4 largest faces". After Person Z, new people show as "Person ?" and are still logged.
+- If more than 4 faces are in view, only the 4 largest are read and the page says "Showing the 4 largest faces". Far faces count towards the 4, and being smallest they are the first left out. After Person Z, new people show as "Person ?" and are still logged.
 - Only one session runs at a time. A second tab is told "The app is already open in another tab." Reloading the page ends the session and starts a new one.
 
 ### Alarm timing
@@ -77,12 +78,23 @@ The alarm plays while anyone is sleeping or about to sleep, and stops when nobod
 - Recognition can confuse similar faces (relatives, for example). People are only recognised within one session.
 - Someone who stays turned away for over 2 seconds gets a new letter. If they then face the camera and are recognised, they take their old letter back, and the log shows the new letter leaving.
 - A letter's first three good views are kept for the whole session, so a poor first view stays a weak reference, and a big change in appearance (glasses off, very different light) can cost a person their letter.
-- A stranger who sits in the seat of someone who just left can show under that person's letter for about 2 seconds, until two checks facing the camera fail. Then the stranger gets a new letter, and the first person is logged as left.
-- Someone returning with their head down and eyes open, before anything is known about their normal head position, can get a new letter.
+- A stranger who sits in the seat of someone who just left shows under that person's letter until two checks in a row fail. Checks run about once a second, so that is about 2 seconds **only if the stranger faces the camera the whole time**. A check needs a face turned under 20 degrees, open eyes, and a head tilt under 30 degrees from that person's normal, and it is skipped during a nod. A stranger who stays turned, sits with eyes closed or stays far away keeps the letter for as long as that lasts. Then the stranger gets a new letter, and the first person is logged as left.
+- Someone returning with their head down and eyes open, before anything is known about their normal head position, can get a new letter. They take their old letter back after they look up, once the checks above have run, which can take about 2 seconds. A head more than 30 degrees from where that new letter learned its normal is not checked until it comes closer.
 - Time with no face does not count as closed-eye time, and neither does any frame gap over 0.2 seconds. **If the app runs below about 5 frames a second, the sleep count stops growing and "sleeping" will not show.** Target is 15, 8 is acceptable.
 - When the browser tab is hidden, the page stops sending frames, so **detection and the alarm pause**. The alarm is silenced, and a note shows on return.
+- With 4 people close to the camera, a real browser on the i3 laptop measured about 4.5 frames a second, under the 5 that the sleep count needs (5.1 before far faces were added). One person measured 9.1. The test used a canvas as the camera, and the same scenes sent straight to the socket with no browser ran at about 13, so the browser itself takes a large share. Check this with a real camera before relying on sleep detection for a group.
 - If the app takes more than 5 seconds to answer one frame, the session ends with a message.
 - The thresholds were not tuned on camera yet, and were only ever aimed at one face (the owner's).
+
+### Far faces
+
+- **Nothing can be read at this size.** No expressions, no sleep, no alarm and no snap, so a far person who falls asleep is not flagged. Someone red who moves far away stops the alarm.
+- **Recognition at a distance is weak.** A far face can match a letter already known, wrongly as well as rightly, but it never stores a view or strips a letter. A new far person gets a new letter after 2 seconds, and takes their old one back if they come close and are recognised.
+- **A real room finds less than the test did.** Faces down to 16 pixels were found in a clean test with a sharp, well-lit, front-on photo. Expect a shorter range with dim light, a turned head, motion or a soft webcam picture.
+- **False faces are possible.** A far face must last 5 frames in a row before it shows. YuNet runs on every second frame, so that is 3 real detections, about half a second. This stops flicker. It does **not** stop a picture on a wall that YuNet reads steadily: that shows as a far person, gets a letter and counts as a face.
+- A false far face that appears close to where someone just left can inherit their track, and so their letter, because a far view can't fail a check. That person then gets a new letter if they return somewhere else while it lasts.
+- A face over 100 pixels wide is never far. If MediaPipe loses it, it is lost, as it always was.
+- Someone who moves between near and far is hidden for a moment while the far view proves itself, then logged as `is too far to read`. A person first seen far is logged as `joined` only.
 
 ## Models and licenses
 
@@ -93,8 +105,9 @@ Models are downloaded by `scripts/setup_models.py`. Licenses below were looked u
 | Eyes, mouth, head tilt | MediaPipe Face Landmarker (`face_landmarker.task`) | **Not confirmed.** Google's page and model cards I could open state no license. Third-party mirrors say Apache 2.0, which I did not accept as proof. | [Google docs](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker) |
 | Expressions | HSEmotion `enet_b0_8_best_vgaf` | **Code: Apache 2.0** (repo LICENSE file). **The weights file itself: not confirmed**, the repo does not name a separate license for it. Its training data terms (VGGFace2, AffectNet) were not checked. | [Repo](https://github.com/HSE-asavchenko/face-emotion-recognition), [LICENSE](https://raw.githubusercontent.com/HSE-asavchenko/face-emotion-recognition/main/LICENSE) |
 | Recognition | OpenCV SFace (`face_recognition_sface_2021dec`) | **Apache 2.0.** "All files in this directory are licensed under Apache 2.0 License." | [Hugging Face](https://huggingface.co/opencv/face_recognition_sface) |
+| Far faces | OpenCV YuNet (`face_detection_yunet_2023mar`) | **MIT.** "All files in this directory are licensed under MIT License." The LICENSE file reads MIT, copyright 2020 Shiqi Yu. Its training data terms were not checked. | [Hugging Face](https://huggingface.co/opencv/face_detection_yunet), [OpenCV Zoo](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet), [LICENSE](https://huggingface.co/opencv/face_detection_yunet/blob/main/LICENSE) |
 
-**Blocker for commercial or exam use:** two of the three models have an unconfirmed license (MediaPipe model file, HSEmotion weights and their training data). Confirm both before any commercial or exam use. None of the three was found to be non-commercial, but "not found" is not "confirmed".
+**Blocker for commercial or exam use:** two of the four models have an unconfirmed license (MediaPipe model file, HSEmotion weights and their training data). Confirm both before any commercial or exam use. None of the four was found to be non-commercial, but "not found" is not "confirmed".
 
 `models/sample_face.png` (a scikit-image sample photo) is downloaded only for the model tests.
 
@@ -133,9 +146,16 @@ The **Download debug log** button saves the last 90 seconds as a JSON file to yo
 4. **Recognition:** leave and return, doze and wake, and turn away, then read `best_score`, `runner_up_score` and `anchor_score` in the identity entries. The settings are:
    - `identity_match_at` (0.363): the score that counts as the same person.
    - `identity_anchor_signatures` (3): first good views kept for the session, on top of the `identity_max_signatures` (5) rolling views.
-   - `identity_mismatch_checks` (2): frontal checks in a row that must fail before a track loses its letter.
-   - `frontal_yaw_deg` (20) and `frontal_pitch_delta_deg` (12): how far from facing the camera and from the person's normal head pitch a view can be and still count as good. It must also have eyes open, under `eyes_closed_at`.
-5. Change one number at a time and retry.
+   - `identity_mismatch_checks` (2): checks in a row that must fail before a track loses its letter.
+   - `frontal_yaw_deg` (20) and `frontal_pitch_delta_deg` (12): how far from facing the camera and from the person's normal head pitch a view can be and still count as good enough to store. It must also have eyes open, under `eyes_closed_at`.
+   - `identity_check_pitch_delta_deg` (30): a looser limit for checking a letter, never for storing. The pitch must be under it. The yaw and open-eye limits stay, and a nod (past `head_droop_deg` with eyes at `head_droop_eyes_at` or more) is not a check, so a person dozing keeps their letter.
+5. **Far faces:** the settings are:
+   - `far_score_at` (0.7): how sure YuNet must be. Raise it if pictures on a wall show as people.
+   - `far_min_width_px` (16) and `far_max_width_px` (100): the widths that count as far, in pixels of the frame sent to the server. Keep the top well above where MediaPipe stops finding faces, which was between 60 and 70.
+   - `far_confirm_frames` (5): frames in a row before a far face shows at all, counting frames that reuse YuNet's last result.
+   - `far_every_frames` (2): how often YuNet runs. 1 is every frame, at a real cost in frame rate.
+   - `far_same_face_overlap` (0.5): how much of the smaller box must overlap for a YuNet face and a MediaPipe face to be one face, if YuNet's centre is not already inside the MediaPipe box.
+6. Change one number at a time and retry.
 
 ## Checks to run on camera
 
@@ -151,11 +171,14 @@ Second faces can be a photo or video on a phone. These are demo targets, except 
 - [ ] Two sessions make two log files.
 - [ ] With Wi-Fi off, the app still starts and works.
 - [ ] Nothing is sent anywhere but `127.0.0.1`.
+- [ ] Walk away from the camera and back: the letter stays, the line changes to `is too far to read` and back.
+- [ ] The wall behind you shows no far person. If the calendar does, raise `far_score_at`.
+- [ ] With a person far away, the page still runs at 8 frames a second or more.
 
 ## Project layout
 
 - `app/core/`: detection rules and logic, with no camera or model code, fully unit tested.
-- `app/models.py`: the three model wrappers.
+- `app/models.py`: the model wrappers.
 - `app/pipeline.py`, `app/server.py`, `app/session_files.py`: the frame pipeline, the FastAPI server and WebSocket, and the log and snap files.
 - `web/`: the page (`index.html`, `app.js`, `styles.css`). No build step.
 - `scripts/setup_models.py`: downloads the models.
