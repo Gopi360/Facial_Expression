@@ -6,7 +6,7 @@
 
 **Architecture:** A browser page captures the camera and sends JPEG frames over one WebSocket to a FastAPI server on `127.0.0.1`. Pure Python modules in `app/core/` hold all rules and are unit tested with fake inputs. `app/models.py` wraps the real models, and `app/pipeline.py` joins them with dependency injection, so tests need no camera and no model files.
 
-**Tech Stack:** Python 3.12, FastAPI 0.162.0, uvicorn 0.54.0, mediapipe 1.2.2, onnxruntime 1.31.1, opencv-contrib-python 5.0.0.93, numpy 2.5.4, pytest 9.2.0, httpx 0.28.1.
+**Tech Stack:** Python 3.12, FastAPI 0.162.0, uvicorn 0.54.0, mediapipe 1.2.2, onnxruntime 1.31.1, opencv-contrib-python 5.0.0.93, numpy 2.5.4, pytest 9.2.0, httpx2 2.16.0, websockets 17.4.
 
 **Spec:** `docs/superpowers/specs/2026-11-06-python-rebuild-design.md`
 
