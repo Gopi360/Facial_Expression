@@ -749,7 +749,7 @@ def test_debug_lines_show_the_sleep_count_and_identity_score(tmp_path):
     rig.run(1200, face(1))
     rig.run(500, face(1, closed=True))
     lines = rig.result.debug
-    assert "A sleep: closed 400 ms, closed at 0.55" in lines
+    assert "A sleep: closed 400 ms, closed at 0.33" in lines
     assert any(line.startswith("A identity: best A 1.00, ") for line in lines)
     assert any(line.startswith("A raw: eyeBlink 0.95") for line in lines)
 

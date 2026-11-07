@@ -11,16 +11,8 @@ from app.core.types import DrowsySign, Reading, Signals
 MS_PER_SEC = 1000
 
 
-def _closed_threshold(s: Signals) -> float:
-    return (
-        CONFIG.eyes_closed_when_looking_down_at
-        if s.look_down >= CONFIG.look_down_at
-        else CONFIG.eyes_closed_at
-    )
-
-
 def _is_eyes_closed(s: Signals) -> bool:
-    return s.eye_closure >= _closed_threshold(s)
+    return s.eye_closure >= CONFIG.eyes_closed_at
 
 
 def _is_angry(s: Signals) -> bool:
@@ -112,7 +104,7 @@ class PersonClassifier:
             "strong_held": strong,
             "strong_sustained": sustained,
             "closed_ms": self._closed_ms(now_ms),
-            "closed_threshold": _closed_threshold(s),
+            "closed_threshold": CONFIG.eyes_closed_at,
         }
         return self._display(s, self._candidate(s, now_ms, delay_ms, strong, emotion), now_ms)
 
@@ -217,11 +209,11 @@ class PersonClassifier:
             if now_ms - end_ms <= CONFIG.slow_blink_window_ms
         ]
         closed = _is_eyes_closed(s)
-        not_looking_down = s.look_down < CONFIG.look_down_at
-        droopy = not_looking_down and s.eye_closure >= CONFIG.droopy_eyes_at
+        # look_down is not used here: on a real face it sits high even at rest, so it
+        # cannot tell looking down from closed eyes. Head tilt does that instead.
+        droopy = s.eye_closure >= CONFIG.droopy_eyes_at
         head_droop = (
-            not_looking_down
-            and s.pitch_delta >= CONFIG.head_droop_deg
+            s.pitch_delta >= CONFIG.head_droop_deg
             and s.eye_closure >= CONFIG.head_droop_eyes_at
         )
         # A blink passes through the droopy hold, but a longer closure ends it.

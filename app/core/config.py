@@ -15,17 +15,15 @@ class Config:
     baseline_fallback_max_closure: float = 0.7
     baseline_open_eyes_below: float = 0.5
     # sleep rules
-    eyes_closed_at: float = 0.55
-    eyes_closed_when_looking_down_at: float = 0.8
-    look_down_at: float = 0.4
+    eyes_closed_at: float = 0.33
     open_grace_ms: int = 200
     slow_blink_ms: int = 400
     slow_blink_window_ms: int = 10000
     slow_blinks_for_drowsy: int = 2
-    droopy_eyes_at: float = 0.35
+    droopy_eyes_at: float = 0.22
     droopy_hold_ms: int = 3000
-    head_droop_deg: float = 15
-    head_droop_eyes_at: float = 0.45
+    head_droop_deg: float = 16
+    head_droop_eyes_at: float = 0.08
     head_droop_hold_ms: int = 1500
     drowsy_clear_ms: int = 2000
     drowsy_min_confidence: float = 0.5

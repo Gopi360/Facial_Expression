@@ -206,8 +206,8 @@ def test_frontal_view_is_near_the_persons_normal_pitch_not_level():
 def test_frontal_view_needs_open_eyes_against_the_persons_own_normal():
     baseline = Baseline()
     feed(baseline, face(0.4), 0, 2500)
-    # (0.7 - 0.4) / 0.6 is 0.5, under eyes_closed_at, though 0.7 is over it raw.
-    assert baseline.is_frontal(face(0.7))
+    # (0.55 - 0.4) / 0.6 is 0.25, under eyes_closed_at, though 0.55 is over it raw.
+    assert baseline.is_frontal(face(0.55))
     assert not baseline.is_frontal(face(0.9))
 
 

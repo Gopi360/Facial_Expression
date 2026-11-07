@@ -30,7 +30,7 @@ LAUGH = replace(OPEN, smile=0.8, jaw_open=0.5)
 MODEL_LAUGH = replace(OPEN, smile=0.45, jaw_open=0.5)  # under strong_smile_at
 ANGRY = replace(OPEN, brow_down=0.7)
 CRYING = replace(OPEN, brow_inner_up=0.6, frown=0.5)
-DROOPY = replace(OPEN, eye_closure=0.4)
+DROOPY = replace(OPEN, eye_closure=0.28)
 YAWN = replace(OPEN, jaw_open=0.8)
 
 Emotion = dict[str, float] | None
@@ -326,7 +326,7 @@ def test_drooping_eyes_for_3_seconds_give_drowsy():
 @pytest.mark.parametrize("period_ms", [2000, 2500, 3300, 5000])
 def test_droopy_eyes_with_200ms_blinks_reach_drowsy_and_stay_drowsy_for_30s(period_ms):
     classifier = PersonClassifier()
-    droopy = replace(OPEN, eye_closure=0.45)
+    droopy = replace(OPEN, eye_closure=0.28)
 
     def blinking(t: int) -> Signals:
         return CLOSED if t % period_ms < 200 else droopy
@@ -379,7 +379,10 @@ def test_head_droop_with_closed_eyes_gives_drowsy_at_1_5_seconds_whatever_the_de
 
 
 def test_looking_down_with_eyes_open_never_triggers():
-    looking_down = replace(OPEN, pitch_delta=25, look_down=0.7, eye_closure=0.5)
+    # Eyes read as a little closed when looking down, and the head tilts less than a nod.
+    looking_down = replace(
+        OPEN, pitch_delta=CONFIG.head_droop_deg - 1, look_down=0.7, eye_closure=0.2
+    )
     labels = labels_shown(PersonClassifier(), lambda t: looking_down, 0, 30000)
 
     assert "sleeping" not in labels
@@ -395,7 +398,7 @@ def test_stays_until_its_signs_have_been_gone_for_2_seconds():
 
 
 def test_a_strong_expression_suppresses_drowsy():
-    smiling_droopy = replace(OPEN, eye_closure=0.4, smile=0.8)
+    smiling_droopy = replace(OPEN, eye_closure=0.28, smile=0.8)
     labels = labels_shown(PersonClassifier(), lambda t: smiling_droopy, 0, 10000)
 
     assert "drowsy" not in labels
@@ -442,7 +445,7 @@ def test_one_strong_frame_while_drowsy_does_not_stop_it():
 def test_a_strong_expression_held_for_500ms_ends_drowsy():
     classifier = PersonClassifier()
     run(classifier, DROOPY, 0, 3300)
-    laughing = replace(LAUGH, eye_closure=0.4)
+    laughing = replace(LAUGH, eye_closure=0.28)
 
     assert run(classifier, laughing, 3366, 4500, emotion=HAPPY).label == "laughing"
 
@@ -450,7 +453,7 @@ def test_a_strong_expression_held_for_500ms_ends_drowsy():
 def test_a_laugh_starting_just_before_the_droopy_hold_ends_never_shows_drowsy():
     classifier = PersonClassifier()
     run(classifier, DROOPY, 0, 2800)
-    laughing = replace(LAUGH, eye_closure=0.4)
+    laughing = replace(LAUGH, eye_closure=0.28)
 
     assert "drowsy" not in labels_shown(classifier, lambda t: laughing, 2866, 6000)
 
@@ -458,7 +461,7 @@ def test_a_laugh_starting_just_before_the_droopy_hold_ends_never_shows_drowsy():
 @pytest.mark.parametrize(("emotion", "label"), [(ANGER, "angry"), (CALM, "neutral")])
 def test_known_limit_resting_brows_at_the_angry_level_with_droopy_eyes(emotion, label):
     """The blendshape rule protects either way, so with CALM a missed drowsy goes unseen."""
-    frowning_droopy = replace(OPEN, eye_closure=0.4, brow_down=0.45)
+    frowning_droopy = replace(OPEN, eye_closure=0.28, brow_down=0.45)
     classifier = PersonClassifier()
     labels = labels_shown(
         classifier, lambda t: frowning_droopy, 0, 60000, emotion_at=lambda t: emotion
@@ -482,7 +485,7 @@ def test_model_laugh_with_squeezed_eyes_stays_out_of_sleeping_until_the_5_second
 
 
 def test_model_laugh_with_a_squint_never_gives_drowsy():
-    squinting = replace(MODEL_LAUGH, eye_closure=0.4)
+    squinting = replace(MODEL_LAUGH, eye_closure=0.28)
     labels = labels_shown(
         PersonClassifier(), lambda t: squinting, 0, 10000, emotion_at=lambda t: HAPPY
     )
@@ -719,7 +722,7 @@ def test_confidence_stays_an_integer_from_0_to_100():
         (replace(OPEN, brow_down=1.4), scores(Anger=1.4)),
         (replace(OPEN, brow_inner_up=1.3, frown=1.3), scores(Sadness=1.3)),
         (replace(OPEN, eye_closure=1.2), None),
-        (replace(OPEN, eye_closure=0.4), None),
+        (replace(OPEN, eye_closure=0.28), None),
         (replace(OPEN, jaw_open=1.5), None),
     ]
 
@@ -802,4 +805,39 @@ def test_debug_info_gives_the_closed_count_and_the_threshold_in_force():
     assert classifier.debug_info()["closed_threshold"] == CONFIG.eyes_closed_at
     run(classifier, replace(CLOSED, look_down=0.9), 66, 1066)
     assert classifier.debug_info()["closed_ms"] == 1000
-    assert classifier.debug_info()["closed_threshold"] == CONFIG.eyes_closed_when_looking_down_at
+    assert classifier.debug_info()["closed_threshold"] == CONFIG.eyes_closed_at
+
+
+# Real readings from the owner's on-camera test, wearing glasses (2026-11-07), against
+# their baseline of closure 0.11 and pitch -8.8. "Looking down" sits high even at rest.
+OWNER_OPEN = replace(OPEN, eye_closure=0.0, look_down=0.61, pitch_delta=0)
+OWNER_CLOSED = replace(OPEN, eye_closure=0.48, look_down=0.77, pitch_delta=0.5)
+OWNER_NOD = replace(OPEN, eye_closure=0.13, look_down=0.49, pitch_delta=21.9)
+OWNER_KEYBOARD = replace(OPEN, eye_closure=0.135, look_down=0.65, pitch_delta=10.8)
+OWNER_HALF_CLOSED = replace(OPEN, eye_closure=0.095, look_down=0.59, pitch_delta=7)
+
+
+def test_owner_closed_eyes_behind_glasses_reach_sleeping_at_the_delay():
+    classifier = PersonClassifier()
+    run(classifier, OWNER_OPEN, 0, 3000)
+    assert run(classifier, OWNER_CLOSED, 3066, 5900).label != "sleeping"
+    assert run(classifier, OWNER_CLOSED, 5966, 6200).label == "sleeping"
+
+
+def test_owner_nod_gives_drowsy():
+    classifier = PersonClassifier()
+    run(classifier, OWNER_OPEN, 0, 3000)
+    assert run(classifier, OWNER_NOD, 3066, 5000).label == "drowsy"
+
+
+def test_owner_open_eyes_never_alarm():
+    classifier = PersonClassifier()
+    assert run(classifier, OWNER_OPEN, 0, 30000).label == "neutral"
+
+
+@pytest.mark.parametrize("pose", [OWNER_KEYBOARD, OWNER_HALF_CLOSED])
+def test_owner_looking_at_the_keyboard_or_half_closed_never_alarms(pose):
+    classifier = PersonClassifier()
+    run(classifier, OWNER_OPEN, 0, 3000)
+    labels = {run(classifier, pose, ms, ms + 66).label for ms in range(3066, 33000, 132)}
+    assert labels == {"neutral"}
