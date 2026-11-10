@@ -60,6 +60,11 @@ def batches(items, size, shuffle, rng):
 
 def run_epoch(model, data, optimiser, loss_fn, rng):
     model.train(True)
+    # Keep every BatchNorm layer in eval mode in both phases: the ear dataset is small, so letting
+    # the running statistics drift would quietly change the "frozen" backbone that gets exported.
+    for m in model.modules():
+        if isinstance(m, nn.modules.batchnorm._BatchNorm):
+            m.eval()
     total, loss_sum = 0, 0.0
     for chunk in batches(data, 32, True, rng):
         imgs = [augment(img, rng) for img, _ in chunk]
@@ -115,6 +120,14 @@ def main():
     if not train_p or not test_p:
         sys.exit("Not enough runs to split into train and test. Collect photos over more Start-to-Stop runs.")
     print(f"train {len(train_p)} photos, test {len(test_p)} photos (split by run)")
+
+    for name, side in (("train", train_p), ("test", test_p)):
+        for lab in labels:
+            if not any(p.parent.name == lab for p in side):
+                sys.exit(
+                    f"Label '{lab}' has no photos on the {name} side (it may be empty, or all its runs landed on "
+                    f"the other side). Take more Start-to-Stop runs of '{lab}' and try again."
+                )
 
     idx = {lab: i for i, lab in enumerate(labels)}
     train = [(load_image(p, size), idx[p.parent.name]) for p in train_p]
