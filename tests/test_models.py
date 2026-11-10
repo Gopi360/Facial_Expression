@@ -39,6 +39,15 @@ def test_finds_one_face_in_sample():
 
 
 @pytest.mark.models
+def test_find_gives_ear_anchors():
+    faces = FaceFinder(MODELS).find(_sample())
+    assert len(faces) == 1
+    face = faces[0]
+    assert "left" in face.ears and "right" in face.ears
+    assert face.ears["left"][0] > face.ears["right"][0]
+
+
+@pytest.mark.models
 def test_blank_frame_finds_no_faces():
     blank = np.zeros((480, 640, 3), np.uint8)
     assert FaceFinder(MODELS).find(blank) == []

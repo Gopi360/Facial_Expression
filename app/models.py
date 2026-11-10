@@ -17,6 +17,7 @@ from app.core.types import Box, FarDetectFailed, RawFace
 
 # SFace point order: right eye, left eye, nose, right mouth corner, left mouth corner
 _POINT_INDICES = (468, 473, 1, 61, 291)
+_EAR_INDICES = {"left": 454, "right": 234}
 _MEAN = np.array((0.485, 0.456, 0.406), np.float32)
 _STD = np.array((0.229, 0.224, 0.225), np.float32)
 
@@ -109,7 +110,10 @@ class FaceFinder:
                 except (IndexError, ValueError):
                     pitch, yaw = 0.0, 0.0
             points = [(marks[k].x * w, marks[k].y * h) for k in _POINT_INDICES]
-            faces.append(RawFace(Box(x0, y0, x1 - x0, y1 - y0), scores, pitch, yaw, points))
+            ears = {side: (marks[k].x * w, marks[k].y * h) for side, k in _EAR_INDICES.items()}
+            faces.append(
+                RawFace(Box(x0, y0, x1 - x0, y1 - y0), scores, pitch, yaw, points, ears=ears)
+            )
         return faces + self._find_far(frame_bgr, faces)
 
     def _find_far(self, frame_bgr: np.ndarray, near: list[RawFace]) -> list[RawFace]:

@@ -1,11 +1,13 @@
 """Shared plain data types. No cv2, mediapipe, onnxruntime or fastapi imports here."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
 DrowsySign = Literal["slowBlinks", "droopy", "headDroop", "stayedClosed"]
+
+Side = Literal["left", "right"]  # the person's own ear; the same side of the screen when mirrored
 
 Label = Literal[
     "sleeping", "drowsy", "yawning", "angry", "laughing", "smiling", "crying", "neutral", "far"
@@ -31,6 +33,7 @@ class RawFace:
     points: list[tuple[float, float]]  # 5 points, pixels
     far: bool = False  # too small to read: a box and points only, with empty scores
     reused: bool = False  # a far face from YuNet's last run, not seen again on this frame
+    ears: dict[Side, tuple[float, float]] = field(default_factory=dict)  # face-outline point by each ear, pixels
 
 
 class FarDetectFailed(Exception):
@@ -65,6 +68,7 @@ class Person:
     box: Box
     reading: Reading
     visible: bool
+    ears_hidden: bool = False
 
 
 @dataclass(frozen=True)
