@@ -1,13 +1,14 @@
 # Project Handover
 
-Last updated: 2026-11-07. Read this first when starting a new chat.
+Last updated: 2026-11-10. Read this first when starting a new chat.
 
 ## Where things stand
 
-A local Python demo that reads the laptop camera and shows each person's expression, sounds an alarm for sleep, and keeps a log and snaps of red marks. Stage 1 is built and working on real people. **Nothing is merged yet.**
+A local Python demo that reads the laptop camera and shows each person's expression, sounds an alarm for sleep, and keeps a log and snaps of red marks. Stage 1 is built and working on real people, and is merged into `main` (merge commit `be7b9fb`, 2026-11-10). Stage 2a (ear visibility) is being designed on `feat/stage-2a-ears`.
 
-- **Work branch:** `feat/python-rebuild` (all current code).
-- **`main`:** holds only an empty first commit.
+- **`main`:** Stage 1, merged locally and pushed.
+- **Work branch:** `feat/stage-2a-ears`, for Stage 2a.
+- **`feat/python-rebuild`:** the Stage 1 work branch, now merged.
 - **GitHub:** https://github.com/Gopi360/Facial_Expression (public). All three branches are pushed.
 - **`feat/expression-demo`:** the old TypeScript version, kept for reference.
 - **Tests:** 451 passing. Run `.venv\Scripts\python -m pytest -q`.
@@ -39,8 +40,8 @@ A local Python demo that reads the laptop camera and shows each person's express
 
 ## Pending work, in order
 
-1. **Finish the three untested checks above**, then decide on the merge. Options: merge to `main` locally, or open a pull request on GitHub.
-2. **Stage 2: ear and device detection.** Not built. See below.
+1. **Finish the three untested checks above** when a second person and a wall picture are available. Deferred on 2026-11-10, not a blocker.
+2. **Stage 2: ear and device detection.** Split by the owner: 2a ears visible or not (design: `docs/superpowers/specs/2026-11-10-stage-2a-ear-visibility-design.md`), then 2b EarPods. See below.
 3. **Small known issues**, listed below.
 4. **Names (undecided).** The app shows Person A and Person B and learns faces live. The owner raised few-shot registration from photos, as in their earlier project `E:\MCA_MAJOR_PROJECT\Smart-Exam-Hall-Attendance-System`, but did not say whether they want real names. Ask.
 
@@ -51,7 +52,7 @@ The owner's rule, for each person: are the ears visible? If not, say "ears are n
 - It starts as a demo feature. Exam use may come later.
 - A person whose ears are covered stays red, and a human judges from the snap.
 - Near-term target: it only has to work on the owner.
-- **Open question for the owner:** which devices do they have to test with?
+- The owner has **EarPods** to test with. Training will be on the laptop, with Colab as the fallback.
 
 Planned approach, not yet designed in detail. Run brainstorming first:
 1. Add a photo-capture mode to the app.
