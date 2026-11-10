@@ -2,7 +2,7 @@
 
 Plan: `docs/superpowers/plans/2026-11-10-stage-2a-ear-visibility.md`. Spec: `docs/superpowers/specs/2026-11-10-stage-2a-ear-visibility-design.md`. Branch `feat/stage-2a-ears`.
 
-Rulings, fix rounds and deferred minor issues, copied from the working ledger and grouped by task. Task 6 has none yet. On-camera tuning rulings (spec section 9) are added here when the owner runs the checks.
+Rulings, fix rounds and deferred minor issues, copied from the working ledger and grouped by task. On-camera results are at the end.
 
 ## Task 1
 
@@ -43,3 +43,16 @@ Rulings, fix rounds and deferred minor issues, copied from the working ledger an
 ## Task 6
 
 - implementer DONE fe0f934 (511 pass, 1 skip). Sent back before review: deferred-items pointer targeted git-ignored ledger; README lacked restart-after-training note — Ruling: commit docs/superpowers/stage-2a-ledger.md as the durable record — the sdd workspace is deleted at finish — costs nothing if wrong.
+- review 1 approved, but the controller confirmed a real gap: `.strip-people` is a 2-column grid, so the ear line sat beside its person. Fix round 1: one wrapper div per person, plus the `REAL_JPEG` rename and an isolated corrupt-onnx test.
+- fix round 1/5 (3 addressed, 0 open; commits 5f3c123..8f123cc)
+- minor (deferred): test_missing_ear_model_runs_without_ears partly redundant, weak second assertion; README "Checks to run" lists 2 ear checks against the spec's 8
+- complete for steps 1-5 (commits b17b44e..8f123cc, review clean)
+
+## Photos, training and on-camera checks (2026-11-10)
+
+- Photos: 1013 clear, 459 covered, over 7 covered runs, glasses on, the owner only.
+- Some squares land on the eye and glasses lens instead of the ear, when the head is turned far or a hand or cloth covers the side of the face (MediaPipe's outline drifts inward). They are in both labels. Left in for now.
+- Training on the laptop took 25 s (8 passes). Held-out runs: clear 98.3% (396/403, 7 called covered), covered 100% (79/79). The covered test set is small.
+- On camera, the owner reports all checks pass: sitting normally and head turns not flagged, hand over an ear flags and clears, sleep still sounds. Per-check timings and the frame rate were not recorded.
+- No numbers were tuned after training. Config stays: `ear_covered_at` 0.8, holds 1000/500 ms, grace 2000 ms, square 0.10/0.45, `ear_yaw_sign` -1. No `test_owner_ears_*` tests yet, since nothing was tuned from readings.
+- Not done: the final whole-branch review (subagent-driven process) before merging `feat/stage-2a-ears`.
