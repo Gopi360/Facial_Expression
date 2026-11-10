@@ -220,17 +220,20 @@ function renderStrip(reply) {
   lines.className = 'strip-people';
   reply.lines.forEach((text, i) => {
     const line = document.createElement('div');
+    const entry = document.createElement('div');
+    entry.className = 'strip-entry';
     const person = reply.people[i];
     // Red for the expression itself only. A hidden ear gets its own line below.
     line.className = person?.reason ? 'strip-person alert' : 'strip-person';
     line.textContent = text;
-    lines.append(line);
+    entry.append(line);
     if (person?.ear_line) {
       const ear = document.createElement('div');
       ear.className = 'strip-person strip-ear alert';
       ear.textContent = `↳ ${person.ear_line}`;
-      lines.append(ear);
+      entry.append(ear);
     }
+    lines.append(entry);
   });
   strip.replaceChildren(count, lines);
 

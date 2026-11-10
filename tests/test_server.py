@@ -605,7 +605,7 @@ def test_failed_model_load_is_tried_again(real_factory, monkeypatch):
     server.make_pipeline(False, False)
 
 
-JPEG = cv2.imencode(".jpg", np.zeros((64, 64, 3), np.uint8))[1].tobytes()
+REAL_JPEG = cv2.imencode(".jpg", np.zeros((64, 64, 3), np.uint8))[1].tobytes()
 NOW = datetime(2026, 11, 10, 12, 0, 0)
 
 
@@ -618,8 +618,8 @@ def absent_ears(models_dir):
 
 
 def process_two_frames(pipeline):
-    first = pipeline.process(JPEG, 0, NOW, 1)
-    second = pipeline.process(JPEG, 100, NOW, 1)
+    first = pipeline.process(REAL_JPEG, 0, NOW, 1)
+    second = pipeline.process(REAL_JPEG, 100, NOW, 1)
     return first, second
 
 
@@ -639,13 +639,13 @@ def test_present_ear_model_is_passed_on_and_loaded_once(real_factory, monkeypatc
     second = server.make_pipeline(False, False)
     assert isinstance(first._ears, FakeEars)
     assert FakeEars.loads == 1
-    assert EAR_OFF_WARNING not in (first.process(JPEG, 0, NOW, 1).warning or "")
+    assert EAR_OFF_WARNING not in (first.process(REAL_JPEG, 0, NOW, 1).warning or "")
     assert second._ears is first._ears
 
 
 def test_corrupt_ear_model_is_treated_as_missing(tmp_path):
     (tmp_path / "ears.onnx").write_bytes(b"not a model")
-    (tmp_path / "ears.json").write_text('{"mean": [0, 0, 0]}', encoding="utf-8")
+    (tmp_path / "ears.json").write_text('{"labels": ["clear", "covered"], "input_px": 96}', encoding="utf-8")
     assert server._load_ear_model(tmp_path) is None
 
 
