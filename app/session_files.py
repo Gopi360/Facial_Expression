@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from .core.config import CONFIG
-from .core.events import is_red
+from .core.events import person_red
 from .core.types import LogEvent, Person
 
 GREEN_BGR = (94, 197, 34)  # #22c55e, the page's normal box colour
@@ -71,7 +71,7 @@ def render_snap(frame_bgr: np.ndarray, people: list[Person]) -> np.ndarray:
     for p in people:
         if not p.visible:
             continue
-        colour = RED_BGR if is_red(p.reading.label) else GREEN_BGR
+        colour = RED_BGR if person_red(p.reading.label, p.ears_hidden) else GREEN_BGR
         x = round((1 - p.box.x - p.box.width) * w)
         y = round(p.box.y * h)
         cv2.rectangle(

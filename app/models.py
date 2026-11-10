@@ -1,6 +1,7 @@
 """Real model wrappers: MediaPipe face landmarks, YuNet far faces, HSEmotion ONNX, OpenCV SFace."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import cv2
@@ -11,9 +12,10 @@ from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
 from app.core.config import CONFIG
+from app.core.ears import ear_square
 from app.core.expressions import EMOTIONS
 from app.core.signals import angles_from_matrix
-from app.core.types import Box, FarDetectFailed, RawFace
+from app.core.types import Box, FarDetectFailed, RawFace, Side
 
 # SFace point order: right eye, left eye, nose, right mouth corner, left mouth corner
 _POINT_INDICES = (468, 473, 1, 61, 291)
@@ -166,6 +168,53 @@ class EmotionModel:
         logits = self._session.run(None, {self._input: x})[0][0]
         probs = _softmax(logits.astype(np.float64))
         return {name: float(p) for name, p in zip(EMOTIONS, probs)}
+
+
+class EarModel:
+    """The trained ear model: the chance each checked ear is covered."""
+
+    def __init__(self, models_dir: Path):
+        path = _require(models_dir, "ears.onnx")
+        meta_path = _require(models_dir, "ears.json")
+        try:
+            meta = json.loads(Path(meta_path).read_text(encoding="utf-8"))
+            labels = list(meta["labels"])
+            self._covered = labels.index("covered")
+            self._input_px = int(meta["input_px"])
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            raise ModelsMissing(f"Could not read {meta_path}: {e}") from e
+        self._session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+        self._input = self._session.get_inputs()[0].name
+
+    def covered(
+        self, frame_bgr: np.ndarray, face: RawFace, sides: tuple[Side, ...]
+    ) -> dict[Side, float]:
+        """Covered chance per side whose square is wholly in the frame. Empty if none is."""
+        h, w = frame_bgr.shape[:2]
+        face_width_px = face.box.width * w
+        checked: list[Side] = []
+        crops: list[np.ndarray] = []
+        for side in sides:
+            anchor = face.ears.get(side)
+            square = None if anchor is None else ear_square(anchor, face_width_px, side, w, h)
+            if square is None:
+                continue
+            x0, y0, size = square
+            crop = cv2.resize(
+                frame_bgr[y0 : y0 + size, x0 : x0 + size],
+                (self._input_px, self._input_px),
+                interpolation=cv2.INTER_AREA,
+            )
+            crops.append(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+            checked.append(side)
+        if not crops:
+            return {}
+        x = (np.stack(crops).astype(np.float32) / 255.0 - _MEAN) / _STD
+        x = np.ascontiguousarray(x.transpose(0, 3, 1, 2))
+        logits = self._session.run(None, {self._input: x})[0].astype(np.float64)
+        e = np.exp(logits - logits.max(axis=1, keepdims=True))
+        probs = e / e.sum(axis=1, keepdims=True)
+        return {side: float(probs[i, self._covered]) for i, side in enumerate(checked)}
 
 
 class FaceSigner:

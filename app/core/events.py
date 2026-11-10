@@ -8,6 +8,9 @@ from .types import Label, LogEvent, Reading
 
 RED_LABELS = frozenset({"sleeping", "drowsy"})
 
+EAR_HIDDEN_LOG = "ears are not visible"
+EAR_VISIBLE_LOG = "ears visible again"
+
 LOG_WORDS: dict[Label, str] = {
     "sleeping": "fell asleep",
     "drowsy": "looks drowsy",
@@ -23,6 +26,11 @@ LOG_WORDS: dict[Label, str] = {
 
 def is_red(label: Label) -> bool:
     return label in RED_LABELS
+
+
+def person_red(label: Label, ears_hidden: bool) -> bool:
+    """Red on screen and in snaps. Hidden ears make a person red, but only sleep sounds."""
+    return is_red(label) or ears_hidden
 
 
 def should_sound(labels: Iterable[Label], muted: bool = False) -> bool:

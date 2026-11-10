@@ -6,8 +6,10 @@ import numpy as np
 import pytest
 
 from app.core.config import CONFIG
+from app.core.ears import sides_to_check
 from app.core.types import Box, FarDetectFailed, RawFace
 from app.models import (
+    EarModel,
     EmotionModel,
     FaceFinder,
     FaceSigner,
@@ -85,6 +87,71 @@ def test_missing_models_raise_with_setup_hint(tmp_path):
     for cls in (FaceFinder, EmotionModel, FaceSigner):
         with pytest.raises(ModelsMissing, match="setup_models.py"):
             cls(tmp_path)
+
+
+def test_ear_model_missing_raises(tmp_path):
+    with pytest.raises(ModelsMissing):
+        EarModel(tmp_path)
+    (tmp_path / "ears.onnx").write_bytes(b"")
+    with pytest.raises(ModelsMissing, match="ears.json"):
+        EarModel(tmp_path)
+
+
+class _StubSession:
+    """Stands in for onnxruntime: logits favour covered for crops brighter than mid grey."""
+
+    def __init__(self):
+        self.inputs = []
+
+    def run(self, _outputs, feeds):
+        x = feeds["x"]
+        self.inputs.append(x)
+        bright = x.mean(axis=(1, 2, 3))
+        return [np.stack([-bright, bright], axis=1).astype(np.float32)]
+
+
+def _stub_ear_model():
+    model = EarModel.__new__(EarModel)
+    model._session = _StubSession()
+    model._input = "x"
+    model._covered = 1  # labels ["clear", "covered"]
+    model._input_px = CONFIG.ear_input_px
+    return model
+
+
+def test_ear_model_runs_one_batch_for_the_sides_with_a_square():
+    frame = np.zeros((480, 640, 3), np.uint8)
+    frame[:, 320:] = 255  # the left ear's square (right of the frame) is bright
+    ears = {"left": (400.0, 240.0), "right": (240.0, 240.0)}
+    face = RawFace(Box(0.375, 0.3, 0.25, 0.4), {}, 0.0, 0.0, [(0.0, 0.0)] * 5, ears=ears)
+    model = _stub_ear_model()
+    covered = model.covered(frame, face, ("left", "right"))
+    assert set(covered) == {"left", "right"}
+    assert covered["left"] > 0.5 > covered["right"]
+    assert all(0 <= p <= 1 for p in covered.values())
+    (batch,) = model._session.inputs
+    assert batch.shape == (2, 3, CONFIG.ear_input_px, CONFIG.ear_input_px)
+    assert batch.dtype == np.float32
+
+
+def test_ear_model_skips_sides_off_the_frame_and_missing_anchors():
+    frame = np.zeros((480, 640, 3), np.uint8)
+    face = RawFace(Box(0.0, 0.3, 0.25, 0.4), {}, 0.0, 0.0, [(0.0, 0.0)] * 5,
+                   ears={"right": (2.0, 240.0)})
+    model = _stub_ear_model()
+    assert model.covered(frame, face, ("left", "right")) == {}
+    assert model._session.inputs == []
+
+
+@pytest.mark.models
+@pytest.mark.skipif(not (MODELS / "ears.onnx").is_file(), reason="no trained ear model yet")
+def test_ear_model_shape():
+    frame = _sample()
+    face = FaceFinder(MODELS).find(frame)[0]
+    sides = sides_to_check(face.yaw_deg)
+    covered = EarModel(MODELS).covered(frame, face, sides)
+    assert covered and set(covered) <= set(sides)
+    assert all(0 <= p <= 1 for p in covered.values())
 
 
 def test_finder_says_when_only_the_far_model_is_missing(tmp_path):

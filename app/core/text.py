@@ -28,3 +28,8 @@ def person_line(p: Person) -> str:
     if p.reading.label == "far":
         return f"Person {p.letter} {LINE_WORDS['far']}"  # nothing was read, so no percent
     return f"Person {p.letter} {LINE_WORDS[p.reading.label]} {round(p.reading.confidence)}%"
+
+
+def ear_line(p: Person) -> str | None:
+    """The second line under a person. The page adds the arrow."""
+    return "ears are not visible" if p.ears_hidden else None

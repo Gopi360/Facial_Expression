@@ -3,7 +3,7 @@ from datetime import datetime
 import numpy as np
 
 from app.core.types import Box, LogEvent, Person, Reading
-from app.session_files import SessionFiles, format_line, render_snap
+from app.session_files import GREEN_BGR, RED_BGR, SessionFiles, format_line, render_snap
 
 START = datetime(2026, 11, 6, 16, 30, 0)
 AT = datetime(2026, 11, 6, 16, 42, 11)
@@ -103,3 +103,11 @@ def test_render_snap_uses_red_for_sleeping_and_green_otherwise():
     green = {tuple(p) for p in render_snap(frame, [person("neutral")]).reshape(-1, 3)}
     assert (68, 68, 239) in red
     assert (94, 197, 34) in green
+
+
+def test_snap_box_red_for_ears():
+    frame = np.zeros((100, 200, 3), np.uint8)
+    hidden = person("neutral")
+    hidden.ears_hidden = True
+    assert RED_BGR in {tuple(p) for p in render_snap(frame, [hidden]).reshape(-1, 3)}
+    assert GREEN_BGR not in {tuple(p) for p in render_snap(frame, [hidden]).reshape(-1, 3)}
