@@ -80,14 +80,30 @@ class FakeSigner:
         return vector
 
 
+class FakeEars:
+    def __init__(self):
+        self.covered_p = 0.0  # the chance it gives each checked side
+        self.error = None
+        self.calls = []  # (marker, far) per call
+
+    def covered(self, frame, f, sides):
+        self.calls.append((f.scores.get("marker"), f.far))
+        if self.error:
+            raise self.error
+        return {side: self.covered_p for side in sides}
+
+
 class Rig:
-    def __init__(self, tmp_path, debug=False):
+    def __init__(self, tmp_path, debug=False, ears=None):
         self.root = tmp_path
         self.finder = FakeFinder()
         self.emotion = FakeEmotion()
         self.signer = FakeSigner()
         self.files = SessionFiles(tmp_path, START)
-        self.pipe = Pipeline(self.finder, self.emotion, self.signer, self.files, debug=debug)
+        self.ears = ears
+        self.pipe = Pipeline(
+            self.finder, self.emotion, self.signer, self.files, debug=debug, ears=ears
+        )
         self.t = 0
         self.result = None
 
@@ -281,6 +297,7 @@ def test_person_dict_shape_for_a_normal_person(rig):
             "red": False,
             "reason": None,
             "visible": True,
+            "ear_line": None,
         }
     ]
     assert rig.result.count_text == "1 face found"
@@ -463,6 +480,7 @@ def test_far_person_shows_a_box_and_letter_with_a_line_and_no_percent(rig):
             "red": False,
             "reason": None,
             "visible": True,
+            "ear_line": None,
         }
     ]
     assert rig.result.alarm is False
@@ -1225,3 +1243,177 @@ def test_close_without_an_alarm_logs_no_alarm_stopped(rig):
     rig.run(300, face(1))
     rig.pipe.close(at(rig.t))
     assert "alarm stopped" not in rig.log_text()
+
+
+# -- ears ----------------------------------------------------------------
+
+EARS_HIDDEN_LINE = "| Person A | ears are not visible"
+
+
+@pytest.fixture
+def ear_rig(tmp_path):
+    return Rig(tmp_path, ears=FakeEars())
+
+
+def lettered(rig, marker=1):
+    rig.run(500, face(marker))
+    assert rig.result.people[0]["letter"] == "A"
+
+
+def hide_ears(rig, marker=1, closed=False):
+    """Covered from now until the ear state turns hidden, frame by frame."""
+    rig.ears.covered_p = 1.0
+    rig.finder.faces = [face(marker, closed=closed)]
+    for _ in range(40):
+        if rig.frame().people[0]["ear_line"]:
+            return
+    raise AssertionError("ears never went hidden")
+
+
+def ear_log_lines(rig):
+    return [line for line in rig.log_text().splitlines() if line.endswith(EARS_HIDDEN_LINE)]
+
+
+def test_hidden_ears_make_person_red_silently(ear_rig):
+    lettered(ear_rig)
+    hide_ears(ear_rig)
+    ear_rig.run(400, face(1))
+    person = ear_rig.result.people[0]
+    assert person["red"] is True
+    assert person["ear_line"] == "ears are not visible"
+    assert person["reason"] is None  # set only for sleep red
+    assert person["label"] == "neutral"
+    assert ear_rig.result.alarm is False
+    assert len(ear_log_lines(ear_rig)) == 1
+    assert "alarm started" not in ear_rig.log_text()
+
+
+def test_ears_visible_again_logs(ear_rig):
+    lettered(ear_rig)
+    hide_ears(ear_rig)
+    ear_rig.ears.covered_p = 0.0
+    ear_rig.run(1500, face(1))  # the clear hold, plus up to a check interval each side
+    assert ear_rig.log_text().count("| Person A | ears visible again") == 1
+    assert ear_rig.result.people[0]["ear_line"] is None
+    assert ear_rig.result.people[0]["red"] is False
+
+
+def test_ear_red_takes_its_own_snap(ear_rig):
+    lettered(ear_rig)
+    hide_ears(ear_rig)
+    ear_rig.run(CONFIG.min_red_ms + 200, face(1))
+    snaps = ear_rig.snaps()
+    assert len(snaps) == 1
+    assert snaps[0].name.endswith("_A_ears.jpg")
+    line = next(s for s in ear_rig.log_text().splitlines() if f"snaps/{snaps[0].name}" in s)
+    assert line.endswith(f"| Person A | ears are not visible | snaps/{snaps[0].name}")
+    assert ear_rig.result.alarm is False
+
+
+def test_sleeping_and_ears_take_two_snaps(ear_rig):
+    ear_rig.go_red()
+    ear_rig.run(CONFIG.min_red_ms, face(1, closed=True))
+    assert [s.name.endswith("_A_sleeping.jpg") for s in ear_rig.snaps()] == [True]
+    hide_ears(ear_rig, closed=True)
+    ear_rig.run(CONFIG.min_red_ms + 200, face(1, closed=True))
+    names = sorted(s.name.rsplit("_", 1)[1] for s in ear_rig.snaps())
+    assert names == ["ears.jpg", "sleeping.jpg"]
+    assert ear_rig.result.alarm is True
+    person = ear_rig.result.people[0]
+    assert person["red"] is True and person["ear_line"] == "ears are not visible"
+    assert person["reason"] == ear_rig.result.lines[0]  # still the sleep line
+
+
+def test_ear_alarm_is_sleep_only(ear_rig):
+    """Ears hidden for a long time never sound, and the alarm stops when sleep stops."""
+    lettered(ear_rig)
+    hide_ears(ear_rig)
+    ear_rig.run(5000, face(1))
+    assert ear_rig.result.alarm is False
+    assert ear_rig.result.people[0]["red"] is True
+
+
+def test_ear_check_rate(ear_rig):
+    ear_rig.run(3000, face(1, x=0.1), face(2, x=0.6))
+    assert [p["letter"] for p in ear_rig.result.people] == ["A", "B"]
+    ear_rig.ears.calls.clear()
+    ear_rig.run(2000, face(1, x=0.1), face(2, x=0.6))
+    # The first frame at or past ear_interval_ms comes every 400 ms at STEP_MS 100: 5 in 2 s.
+    frames_apart = -(-CONFIG.ear_interval_ms // STEP_MS)
+    for marker in (1, 2):
+        assert sum(1 for m, _ in ear_rig.ears.calls if m == marker) == 2000 // (
+            frames_apart * STEP_MS
+        )
+
+
+def test_far_drops_ear_state_quietly(ear_rig):
+    lettered(ear_rig)
+    hide_ears(ear_rig)
+    ear_rig.ears.calls.clear()
+    ear_rig.run(2500, far())
+    assert ear_rig.result.lines == [FAR_LINE]
+    assert ear_rig.result.people[0]["ear_line"] is None
+    assert ear_rig.result.people[0]["red"] is False
+    assert "ears visible again" not in ear_rig.log_text()
+    assert ear_rig.ears.calls == []
+
+
+def test_leaving_saves_owed_ear_snap(ear_rig):
+    lettered(ear_rig)
+    hide_ears(ear_rig)
+    ear_rig.run(CONFIG.min_red_ms - STEP_MS, face(1))
+    assert ear_rig.snaps() == []
+    ear_rig.run(CONFIG.letter_release_ms + 500)
+    assert ear_rig.result.people == []
+    snaps = ear_rig.snaps()
+    assert len(snaps) == 1 and snaps[0].name.endswith("_A_ears.jpg")
+    assert f"snaps/{snaps[0].name}" in ear_rig.log_text()
+    assert "ears visible again" not in ear_rig.log_text()
+
+
+def test_brief_ear_red_then_leaving_takes_no_snap(ear_rig):
+    lettered(ear_rig)
+    hide_ears(ear_rig)
+    ear_rig.run(300, face(1))
+    ear_rig.run(CONFIG.letter_release_ms + 500)
+    assert ear_rig.snaps() == []
+    assert ear_rig.pipe._red_proof == {}
+
+
+def test_returning_after_release_starts_the_ears_fresh(ear_rig):
+    lettered(ear_rig)
+    hide_ears(ear_rig)
+    ear_rig.run(CONFIG.letter_release_ms + 500)
+    ear_rig.ears.covered_p = 0.0
+    ear_rig.run(300, face(1))
+    assert ear_rig.result.people[0]["ear_line"] is None
+    hide_ears(ear_rig)
+    assert len(ear_log_lines(ear_rig)) == 2
+
+
+def test_ear_model_error_warns_and_continues(ear_rig):
+    lettered(ear_rig)
+    ear_rig.ears.error = RuntimeError("ear model broke")
+    ear_rig.finder.faces = [face(1)]
+    warnings = [ear_rig.frame().warning for _ in range(5)]
+    assert pipeline_module.FACE_WARNING in warnings
+    assert warnings.count(pipeline_module.FACE_WARNING) <= 2  # not retried every frame
+    ear_rig.ears.error = None
+    hide_ears(ear_rig)
+    assert ear_rig.result.people[0]["letter"] == "A"
+
+
+def test_no_ear_model_no_ear_lines(rig):
+    rig.go_red()
+    rig.run(CONFIG.min_red_ms, face(1, closed=True))
+    assert all(p["ear_line"] is None for p in rig.result.people)
+    assert rig.result.people[0]["red"] is True
+    assert [s.name.endswith("_A_sleeping.jpg") for s in rig.snaps()] == [True]
+    assert "ears" not in rig.log_text()
+
+
+def test_no_letter_no_ear_check(ear_rig):
+    ear_rig.signer.failing = {1}
+    ear_rig.run(CONFIG.identity_pending_ms - STEP_MS, face(1))
+    assert ear_rig.result.lines == ["Identifying..."]
+    assert ear_rig.ears.calls == []

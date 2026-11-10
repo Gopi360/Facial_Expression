@@ -133,6 +133,10 @@ body {
   font-weight: 600;
 }
 
+.strip-ear {
+  padding-left: 1.5em;
+}
+
 .debug {
   margin: 0;
   overflow-x: auto;
@@ -234,5 +238,30 @@ body {
 .strip-overflow {
   margin-top: 4px;
   color: var(--muted);
+  font-size: 13px;
+}
+
+.collect-panel {
+  margin-top: 8px;
+}
+
+.collect-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.collect-buttons .button {
+  width: auto;
+}
+
+.collect-buttons .button[aria-pressed='true'] {
+  outline: 2px solid var(--line);
+  font-weight: 600;
+}
+
+.collect-note,
+.collect-counts {
+  margin: 8px 0 0;
   font-size: 13px;
 }

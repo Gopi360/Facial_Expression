@@ -21,6 +21,17 @@
           <pre id="debug" class="debug"></pre>
           <button id="debug-download" class="button debug-download" type="button" disabled>Download debug log</button>
         </section>
+        <section id="collect-panel" class="collect-panel" aria-label="Photo mode" hidden>
+          <div class="collect-buttons">
+            <button class="button" type="button" data-collect="both_clear" aria-pressed="false">Both clear</button>
+            <button class="button" type="button" data-collect="left_covered" aria-pressed="false">Left covered</button>
+            <button class="button" type="button" data-collect="right_covered" aria-pressed="false">Right covered</button>
+            <button class="button" type="button" data-collect="both_covered" aria-pressed="false">Both covered</button>
+            <button id="collect-stop" class="button" type="button">Stop</button>
+          </div>
+          <p class="collect-note">Left and right as you see yourself on screen.</p>
+          <p id="collect-counts" class="collect-counts">clear: 0, covered: 0</p>
+        </section>
       </main>
       <aside class="panel">
         <p class="notice">Recording logs and snaps</p>

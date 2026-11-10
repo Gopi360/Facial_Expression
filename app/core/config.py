@@ -89,5 +89,18 @@ class Config:
     far_max_width_px: int = 100  # wider is a near face MediaPipe lost, not someone far away
     far_same_face_overlap: float = 0.5  # share of the smaller box that makes two boxes one face
 
+    # ears
+    ear_both_yaw_deg: float = 20  # under this turn both ears are checked
+    ear_yaw_sign: int = -1  # -1 measured on camera 2026-11-10: +1 checked the ear turned away
+    ear_offset_frac: float = 0.10  # square centre, outward from the face edge, x face width
+    ear_square_frac: float = 0.45  # square side, x face width
+    ear_input_px: int = 96  # ear model input side; training and the app must agree
+    ear_interval_ms: int = 333  # how often the ear model runs per person
+    ear_covered_at: float = 0.8  # cautious start; tune on camera
+    ear_hidden_hold_ms: int = 1000  # covered checks for this long before red
+    ear_clear_hold_ms: int = 500  # clear checks for this long before red clears
+    ear_unchecked_grace_ms: int = 2000  # no check for this long drops the state quietly
+    collect_interval_ms: int = 300  # photo mode saves at most once per this
+
 
 CONFIG = Config()

@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.text import face_count_text, person_line
+from app.core.text import ear_line, face_count_text, person_line
 from app.core.types import Box, Person, Reading
 
 
@@ -37,3 +37,11 @@ def test_far_person_line_has_no_percent():
 
 def test_person_without_letter_shows_identifying():
     assert person_line(person("neutral", letter=None)) == "Identifying..."
+
+
+def test_ear_line():
+    hidden = person("neutral")
+    hidden.ears_hidden = True
+    assert ear_line(hidden) == "ears are not visible"
+    assert ear_line(person("neutral")) is None
+    assert ear_line(person("sleeping")) is None

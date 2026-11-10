@@ -7,6 +7,8 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
@@ -17,7 +19,7 @@ from websockets.sync.client import connect
 import app.server as server
 from app.core.config import CONFIG
 from app.models import ModelsMissing
-from app.pipeline import FrameResult
+from app.pipeline import EAR_OFF_WARNING, FrameResult
 from app.server import create_app
 
 JPEG = b"\xff\xd8 pretend jpeg"
@@ -27,8 +29,10 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
 class FakePipeline:
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, collect=False):
         self.debug = debug
+        self.collect = collect
+        self.collect_labels = []
         self.frames = []
         self.snapshots = []
         self.closed = []
@@ -66,6 +70,9 @@ class FakePipeline:
         self.snapshots.append(at)
         return self.snapshot_warning
 
+    def set_collect(self, label):
+        self.collect_labels.append(label)
+
     def debug_samples(self):
         return [{"t_ms": 1.0, "letter": "A"}]
 
@@ -79,10 +86,10 @@ class Factory:
         self.made = []
         self.error = None
 
-    def __call__(self, debug):
+    def __call__(self, debug, collect=False):
         if self.error:
             raise self.error
-        self.made.append(FakePipeline(debug))
+        self.made.append(FakePipeline(debug, collect))
         return self.made[-1]
 
 
@@ -96,8 +103,8 @@ def client(factory):
     return TestClient(create_app(factory))
 
 
-def start(ws, debug=False):
-    ws.send_json({"type": "start", "debug": debug})
+def start(ws, debug=False, collect=False):
+    ws.send_json({"type": "start", "debug": debug, "collect": collect})
     assert ws.receive_json() == {"type": "ready"}
 
 
@@ -149,6 +156,33 @@ def test_debug_dump_returns_the_samples(client):
             "type": "debug_dump",
             "samples": [{"t_ms": 1.0, "letter": "A"}],
         }
+
+
+def test_collect_message_needs_collect_session(client, factory):
+    with client.websocket_connect("/ws") as ws:
+        start(ws)
+        ws.send_json({"type": "collect", "label": "left_covered"})
+        assert ws.receive_json() == {"type": "error", "message": server.BAD_MESSAGE}
+    assert factory.made[0].collect_labels == []
+
+
+def test_collect_session_passes_label(client, factory):
+    with client.websocket_connect("/ws") as ws:
+        start(ws, collect=True)
+        ws.send_json({"type": "collect", "label": "left_covered"})
+        ws.send_json({"type": "collect", "label": None})
+        ws.send_bytes(JPEG)
+        assert ws.receive_json()["type"] == "frame"
+    assert factory.made[0].collect is True
+    assert factory.made[0].collect_labels == ["left_covered", None]
+
+
+def test_collect_message_with_unknown_label_gets_an_error(client, factory):
+    with client.websocket_connect("/ws") as ws:
+        start(ws, collect=True)
+        ws.send_json({"type": "collect", "label": "nonsense"})
+        assert ws.receive_json() == {"type": "error", "message": server.BAD_MESSAGE}
+    assert factory.made[0].collect_labels == []
 
 
 def test_second_client_is_told_busy(client, factory):
@@ -526,7 +560,8 @@ class FakeModel:
 
 
 class FakeFinder(FakeModel):
-    pass
+    def find(self, frame):
+        return []
 
 
 class FakeEmotion(FakeModel):
@@ -541,6 +576,7 @@ class FakeSigner(FakeModel):
 def real_factory(monkeypatch, tmp_path):
     for cls in (FakeFinder, FakeEmotion, FakeSigner):
         cls.loads = 0
+    monkeypatch.setattr(server, "EarModel", absent_ears)
     monkeypatch.setattr(server, "FaceFinder", FakeFinder)
     monkeypatch.setattr(server, "EmotionModel", FakeEmotion)
     monkeypatch.setattr(server, "FaceSigner", FakeSigner)
@@ -550,8 +586,8 @@ def real_factory(monkeypatch, tmp_path):
 
 
 def test_models_load_once_and_each_session_gets_a_new_pipeline(real_factory):
-    first = server.make_pipeline(False)
-    second = server.make_pipeline(False)
+    first = server.make_pipeline(False, False)
+    second = server.make_pipeline(False, False)
     assert first is not second
     assert (FakeFinder.loads, FakeEmotion.loads, FakeSigner.loads) == (1, 1, 1)
     assert list((real_factory / "logs").glob("session-*.log"))
@@ -563,7 +599,55 @@ def test_failed_model_load_is_tried_again(real_factory, monkeypatch):
 
     monkeypatch.setattr(server, "FaceSigner", missing)
     with pytest.raises(ModelsMissing):
-        server.make_pipeline(False)
+        server.make_pipeline(False, False)
 
     monkeypatch.setattr(server, "FaceSigner", FakeSigner)
-    server.make_pipeline(False)
+    server.make_pipeline(False, False)
+
+
+REAL_JPEG = cv2.imencode(".jpg", np.zeros((64, 64, 3), np.uint8))[1].tobytes()
+NOW = datetime(2026, 11, 10, 12, 0, 0)
+
+
+class FakeEars(FakeModel):
+    pass
+
+
+def absent_ears(models_dir):
+    raise ModelsMissing("no ears")
+
+
+def process_two_frames(pipeline):
+    first = pipeline.process(REAL_JPEG, 0, NOW, 1)
+    second = pipeline.process(REAL_JPEG, 100, NOW, 1)
+    return first, second
+
+
+def test_missing_ear_model_runs_without_ears(real_factory, monkeypatch):
+    monkeypatch.setattr(server, "EarModel", absent_ears)
+    pipeline = server.make_pipeline(False, False)
+    assert pipeline._ears is None
+    first, second = process_two_frames(pipeline)
+    assert EAR_OFF_WARNING in first.warning
+    assert not second.warning or EAR_OFF_WARNING not in second.warning
+
+
+def test_present_ear_model_is_passed_on_and_loaded_once(real_factory, monkeypatch):
+    FakeEars.loads = 0
+    monkeypatch.setattr(server, "EarModel", FakeEars)
+    first = server.make_pipeline(False, False)
+    second = server.make_pipeline(False, False)
+    assert isinstance(first._ears, FakeEars)
+    assert FakeEars.loads == 1
+    assert EAR_OFF_WARNING not in (first.process(REAL_JPEG, 0, NOW, 1).warning or "")
+    assert second._ears is first._ears
+
+
+def test_corrupt_ear_model_is_treated_as_missing(tmp_path):
+    (tmp_path / "ears.onnx").write_bytes(b"not a model")
+    (tmp_path / "ears.json").write_text('{"labels": ["clear", "covered"], "input_px": 96}', encoding="utf-8")
+    assert server._load_ear_model(tmp_path) is None
+
+
+def test_missing_ear_files_are_treated_as_missing(tmp_path):
+    assert server._load_ear_model(tmp_path) is None

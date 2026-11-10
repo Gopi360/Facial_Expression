@@ -15,8 +15,9 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
+from .collect import COLLECT_LABELS, EarCollector
 from .core.config import CONFIG
-from .models import EmotionModel, FaceFinder, FaceSigner, ModelsMissing
+from .models import EarModel, EmotionModel, FaceFinder, FaceSigner, ModelsMissing
 from .pipeline import Pipeline
 from .session_files import SessionFiles
 
@@ -57,23 +58,43 @@ PAGE_CONFIG = (
     "low_fps_hold_ms",
 )
 
-_models: tuple[FaceFinder, EmotionModel, FaceSigner] | None = None
+_models: tuple[FaceFinder, EmotionModel, FaceSigner, EarModel | None] | None = None
 _models_lock = threading.Lock()
 
 
-def _loaded_models() -> tuple[FaceFinder, EmotionModel, FaceSigner]:
+def _load_ear_model(models_dir: Path) -> EarModel | None:
+    """The ear model is optional: a missing or broken one means the ear check is off."""
+    try:
+        return EarModel(models_dir)
+    except ModelsMissing:
+        logger.warning("No ear model in %s, so the ear check is off", models_dir)
+    except Exception:
+        logger.exception("Could not load the ear model, so the ear check is off")
+    return None
+
+
+def _loaded_models() -> tuple[FaceFinder, EmotionModel, FaceSigner, EarModel | None]:
     """Load the models on first use and keep them for every later session."""
     global _models
     with _models_lock:
         if _models is None:
             models_dir = ROOT / "models"
-            _models = (FaceFinder(models_dir), EmotionModel(models_dir), FaceSigner(models_dir))
+            _models = (
+                FaceFinder(models_dir),
+                EmotionModel(models_dir),
+                FaceSigner(models_dir),
+                _load_ear_model(models_dir),
+            )
         return _models
 
 
-def make_pipeline(debug: bool) -> Pipeline:
-    finder, emotion, signer = _loaded_models()
-    return Pipeline(finder, emotion, signer, SessionFiles(ROOT, datetime.now()), debug)
+def make_pipeline(debug: bool, collect: bool = False) -> Pipeline:
+    finder, emotion, signer, ears = _loaded_models()
+    collector = EarCollector(ROOT) if collect else None
+    return Pipeline(
+        finder, emotion, signer, SessionFiles(ROOT, datetime.now()), debug, collector,
+        ears=ears, ears_off=ears is None,
+    )
 
 
 def _is_number(value: object) -> bool:
@@ -101,11 +122,12 @@ class _Session:
     a pipeline call is running. Only run() acts on the inbox, which keeps the calls in turn.
     """
 
-    def __init__(self, socket: WebSocket, make: Callable[[bool], Pipeline]):
+    def __init__(self, socket: WebSocket, make: Callable[[bool, bool], Pipeline]):
         self._socket = socket
         self._make = make
         self._pipeline: Pipeline | None = None
         self._debug = False
+        self._collect = False
         self._delay_sec: float = CONFIG.default_delay_sec
         self._inbox: asyncio.Queue[dict] = asyncio.Queue()
         self._gone = asyncio.Event()
@@ -182,6 +204,8 @@ class _Session:
         reply = {"type": "frame", **asdict(result)}
         if not self._debug:
             del reply["debug"]
+        if reply.get("collect_counts") is None:
+            del reply["collect_counts"]
         await self._socket.send_json(reply)
 
     async def _on_text(self, text: str | None) -> None:
@@ -196,6 +220,8 @@ class _Session:
             await self._on_start(message)
         elif kind == "settings":
             await self._on_settings(message)
+        elif kind == "collect":
+            await self._on_collect(message)
         elif kind not in ("snapshot", "debug_dump"):
             await self._error(BAD_MESSAGE)
         elif self._pipeline is None:
@@ -213,8 +239,18 @@ class _Session:
             await self._error(ALREADY_STARTED)
             return
         self._debug = message.get("debug") is True
-        self._pipeline = await asyncio.to_thread(self._make, self._debug)
+        self._collect = message.get("collect") is True
+        self._pipeline = await asyncio.to_thread(self._make, self._debug, self._collect)
         await self._socket.send_json({"type": "ready"})
+
+    async def _on_collect(self, message: dict) -> None:
+        label = message.get("label")
+        if self._pipeline is None:
+            await self._error(NOT_STARTED)
+        elif not self._collect or not (label is None or label in COLLECT_LABELS):
+            await self._error(BAD_MESSAGE)
+        else:
+            await self._guarded(self._pipeline.set_collect, label)
 
     async def _on_settings(self, message: dict) -> None:
         delay = message.get("delaySec")
@@ -242,7 +278,7 @@ class _Session:
             logger.exception("Could not close the session")
 
 
-def create_app(make: Callable[[bool], Pipeline]) -> FastAPI:
+def create_app(make: Callable[[bool, bool], Pipeline]) -> FastAPI:
     app = FastAPI()
     session_open = False
 

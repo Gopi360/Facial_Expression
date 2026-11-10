@@ -1,6 +1,13 @@
 from datetime import datetime
 
-from app.core.events import diff_events, is_red, should_sound
+from app.core.events import (
+    EAR_HIDDEN_LOG,
+    EAR_VISIBLE_LOG,
+    diff_events,
+    is_red,
+    person_red,
+    should_sound,
+)
 from app.core.types import Reading
 
 AT = datetime(2026, 11, 6, 12, 4, 31)
@@ -72,3 +79,15 @@ def test_should_sound():
     assert not should_sound(["neutral", "yawning"])
     assert not should_sound([])
     assert not should_sound(["sleeping"], muted=True)
+
+
+def test_person_red():
+    assert person_red("neutral", True) is True
+    assert person_red("sleeping", False) is True
+    assert person_red("neutral", False) is False
+    assert should_sound(["neutral"]) is False
+
+
+def test_ear_log_words():
+    assert EAR_HIDDEN_LOG == "ears are not visible"
+    assert EAR_VISIBLE_LOG == "ears visible again"

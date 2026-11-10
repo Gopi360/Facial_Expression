@@ -14,6 +14,7 @@ This is not a safety device, and not a medical tool. Do not use it to watch driv
 - Gives each person a letter (Person A, Person B...). A person who leaves and comes back during one session keeps their letter.
 - Shows a thin box and a small letter on each face in the camera view. All text goes in the strip under the camera and in the right panel, never on the video.
 - Sleeping and about to sleep turn the box red, show the reason in the log, play an alarm sound and save a snap.
+- Checks whether each person's ears can be seen. If an ear is hidden for about a second (a hand, hair, a hat), the person's box turns red, a snap is saved, and a second line shows under their expression line: `↳ ears are not visible`. This needs the ear model (see "Ear check" below). Without it the app still runs and shows "Ear check is off: models/ears.onnx was not found." once.
 - Finds faces too far away to read, down to about 20 pixels wide at best. They get a box and a letter only: no expression, no red mark, no alarm and no snap.
 - Writes one log file per session.
 
@@ -44,11 +45,21 @@ To run the tests: `.venv\Scripts\python -m pytest -q`. Tests marked `models` nee
 
 After `setup_models.py` has run once, the app works with Wi-Fi off. The server listens on `127.0.0.1` only, the page loads no outside files, and nothing is sent anywhere else. The server also refuses WebSocket connections from any web page that is not its own.
 
+## Ear check
+
+For each close face, the app cuts out a square around the ear on the side the head is turned away from, or both sides when the face is nearly front-on. A small model (`models/ears.onnx` and `models/ears.json`) says how likely each ear is covered. When that stays at or above `ear_covered_at` for `ear_hidden_hold_ms`, the person is flagged. It clears after `ear_clear_hold_ms` of clear checks. Someone whose ears were not checked for `ear_unchecked_grace_ms` drops the state quietly. Far faces are never checked.
+
+- **The model is not in Git and is not downloaded by `setup_models.py`.** You make it yourself: take photos in photo mode, then train. The steps are in `training/README.md`.
+- **Restart the app after training.** The server loads `models/ears.onnx` once, when the first session starts, and remembers a missing model until it stops. After training, stop the server and start it again, then reload the page. The page then stops showing "Ear check is off".
+- **Photo mode:** open <http://127.0.0.1:8000/?collect=1>. Buttons (Both clear, Left covered, Right covered, Both covered) choose what the photos show, and the app saves a photo of each ear square, at most once per `collect_interval_ms`, into `dataset/ears/`. These are photos of people: keep `dataset/` private and delete it by hand when done. Be alone in the frame, because every face seen is saved under the chosen label.
+- A hidden ear is red like sleeping, but it is a guess from a small model trained on a few photos. A human must look at the snap.
+
 ## Using the page
 
 - **Start camera:** begins a session. The sound is unlocked by this click, because browsers block sound until you click.
 - Bottom strip: how many faces are found, and one line per person, such as `Person A is smiling 87%`. A new face shows `Identifying...` until a view facing the camera decides who it is, or for up to 2 seconds if the person stays turned away. Someone too far to read shows `Person B is too far to read`, with no percent.
 - **Activity log** (right): label changes, people joining and leaving, red marks, snaps, alarm start and stop.
+- A hidden ear adds an indented red line under that person's expression line, such as `↳ ears are not visible`. The expression line is red only for sleeping or about to sleep, so the two reasons stay apart. The sound is for sleep only.
 - **Alarm:** Mute, Volume, and "Sound after" (1 to 10 seconds, default 3). The delay sets when "sleeping" starts and when the sound starts, but "about to sleep" and head droop can sound before the slider's time.
 - **Snapshot:** saves the current frame by hand.
 - The page always shows "Recording logs and snaps".
@@ -106,9 +117,10 @@ Models are downloaded by `scripts/setup_models.py`. Licenses below were looked u
 | Eyes, mouth, head tilt | MediaPipe Face Landmarker (`face_landmarker.task`) | **Not confirmed.** Google's page and model cards I could open state no license. Third-party mirrors say Apache 2.0, which I did not accept as proof. | [Google docs](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker) |
 | Expressions | HSEmotion `enet_b0_8_best_vgaf` | **Code: Apache 2.0** (repo LICENSE file). **The weights file itself: not confirmed**, the repo does not name a separate license for it. Its training data terms (VGGFace2, AffectNet) were not checked. | [Repo](https://github.com/HSE-asavchenko/face-emotion-recognition), [LICENSE](https://raw.githubusercontent.com/HSE-asavchenko/face-emotion-recognition/main/LICENSE) |
 | Recognition | OpenCV SFace (`face_recognition_sface_2021dec`) | **Apache 2.0.** "All files in this directory are licensed under Apache 2.0 License." | [Hugging Face](https://huggingface.co/opencv/face_recognition_sface) |
+| Ears visible | Own MobileNetV3-Small, trained by you from your photos (`models/ears.onnx`) | **Code: torchvision, BSD-3-Clause. The ImageNet starting weights: no license stated** (see `training/README.md`). Your own photos are your own data. | [torchvision](https://github.com/pytorch/vision/blob/main/LICENSE) |
 | Far faces | OpenCV YuNet (`face_detection_yunet_2023mar`) | **MIT.** "All files in this directory are licensed under MIT License." The LICENSE file reads MIT, copyright 2020 Shiqi Yu. Its training data terms were not checked. | [Hugging Face](https://huggingface.co/opencv/face_detection_yunet), [OpenCV Zoo](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet), [LICENSE](https://huggingface.co/opencv/face_detection_yunet/blob/main/LICENSE) |
 
-**Blocker for commercial or exam use:** two of the four models have an unconfirmed license (MediaPipe model file, HSEmotion weights and their training data). Confirm both before any commercial or exam use. None of the four was found to be non-commercial, but "not found" is not "confirmed".
+**Blocker for commercial or exam use:** three of the five models have an unconfirmed license (MediaPipe model file, HSEmotion weights and their training data, and the ImageNet weights the ear model starts from). Confirm all three before any commercial or exam use. None was found to be non-commercial, but "not found" is not "confirmed".
 
 `models/sample_face.png` (a scikit-image sample photo) is downloaded only for the model tests.
 
@@ -158,7 +170,16 @@ The **Download debug log** button saves the last 90 seconds as a JSON file to yo
    - `far_every_frames` (2): how often YuNet runs. 1 is every frame, at a real cost in frame rate.
    - `far_same_face_overlap` (0.5): how much of the smaller box must overlap for a YuNet face and a MediaPipe face to be one face, if YuNet's centre is not already inside the MediaPipe box.
 6. **Slow machines:** `frame_gap_limit_ms` (500) is the longest time between frames that still counts as watched. `low_fps_warning` (6) and `low_fps_hold_ms` (4000) set the page's slow-running warning.
-7. Change one number at a time and retry.
+7. **Ears:** the settings are:
+   - `ear_both_yaw_deg` (20): under this head turn both ears are checked, over it only the ear turned away.
+   - `ear_yaw_sign` (-1): which ear is "turned away" for a given turn. Measured on camera: +1 checked the wrong ear. Change only if you flip the camera.
+   - `ear_offset_frac` (0.10) and `ear_square_frac` (0.45): where the ear square sits and how big it is, as a fraction of the face width. `ear_square_frac` was set from photos on camera. Training photos and the app must use the same values, so collect again after changing them.
+   - `ear_input_px` (96): the model's input size. Training and the app must agree.
+   - `ear_interval_ms` (333): how often the ear model runs for each person.
+   - `ear_covered_at` (0.8): the chance at or above which a side counts as covered. A cautious start, still to be tuned on camera.
+   - `ear_hidden_hold_ms` (1000), `ear_clear_hold_ms` (500) and `ear_unchecked_grace_ms` (2000): how long covered checks must last before red, how long clear checks must last before it clears, and how long without a check before the state is dropped.
+   - `collect_interval_ms` (300): photo mode saves at most once per this.
+8. Change one number at a time and retry.
 
 ## Checks to run on camera
 
@@ -176,6 +197,8 @@ Second faces can be a photo or video on a phone. These are demo targets, except 
 - [ ] Nothing is sent anywhere but `127.0.0.1`.
 - [ ] Walk away from the camera and back: the letter stays, the line changes to `is too far to read` and back.
 - [ ] The wall behind you shows no far person. If the calendar does, raise `far_score_at`.
+- [ ] Hand over one ear turns the box red with the ear line within about 2 seconds, and taking it away clears it.
+- [ ] Sitting normally and turning the head give no ear flag.
 - [ ] With a person far away, the page still runs at 8 frames a second or more.
 
 ## Project layout
@@ -185,4 +208,5 @@ Second faces can be a photo or video on a phone. These are demo targets, except 
 - `app/pipeline.py`, `app/server.py`, `app/session_files.py`: the frame pipeline, the FastAPI server and WebSocket, and the log and snap files.
 - `web/`: the page (`index.html`, `app.js`, `styles.css`). No build step.
 - `scripts/setup_models.py`: downloads the models.
+- `training/`: the ear model's training script and its own README. `dataset/` (your photos) is git-ignored.
 - `tests/`: pytest tests.

@@ -9,16 +9,34 @@ from datetime import datetime
 import cv2
 import numpy as np
 
+from .collect import CollectLabel, EarCollector
 from .core.classifier import PersonClassifier
 from .core.config import CONFIG
 from .core.debug_log import WATCHED, DebugBuffer
-from .core.events import diff_events, is_red, should_sound
+from .core.ears import EarStatus, EarWatch, sides_to_check
+from .core.events import (
+    EAR_HIDDEN_LOG,
+    EAR_VISIBLE_LOG,
+    diff_events,
+    is_red,
+    person_red,
+    should_sound,
+)
 from .core.identity import UNKNOWN, Identity, IdentityDecision
 from .core.signals import Baseline, raw_eye_closure
 from .core.snap_policy import SnapPolicy
-from .core.text import face_count_text, person_line
+from .core.text import ear_line, face_count_text, person_line
 from .core.tracker import Tracker
-from .core.types import Box, FarDetectFailed, LogEvent, Person, RawFace, Reading, Signals
+from .core.types import (
+    Box,
+    FarDetectFailed,
+    LogEvent,
+    Person,
+    RawFace,
+    Reading,
+    Side,
+    Signals,
+)
 from .session_files import SessionFiles, format_line, render_snap
 
 logger = logging.getLogger(__name__)
@@ -36,6 +54,9 @@ WAITING_READING = Reading("neutral", 0)  # shown for a face with no letter, neve
 FAR_READING = Reading("far", 0)  # nothing can be read at this size, so the number means nothing
 MANUAL_LETTER = "all"
 MANUAL_REASON = "manual"
+EAR_OFF_WARNING = "Ear check is off: models/ears.onnx was not found."
+EAR_REASON = "ears"  # in the ear snap's file name
+EAR_KEY = "#ears"  # added to a state key for the ear snap's own red run
 
 
 @dataclass
@@ -48,6 +69,7 @@ class FrameResult:
     warning: str | None
     overflow: bool
     debug: list[str] | None
+    collect_counts: dict[str, int] | None = None  # None unless photo mode is on
 
 
 @dataclass
@@ -60,6 +82,9 @@ class _PersonState:
     emotion_tried_ms: float = -math.inf
     box: Box | None = None
     reading: Reading | None = None
+    ears: EarWatch = field(default_factory=EarWatch)
+    ear_tried_ms: float = -math.inf
+    ear_status: EarStatus = "unknown"
 
 
 @dataclass
@@ -79,6 +104,9 @@ class _RedProof:
     people: list[Person]
     person: Person
     at: datetime
+    reason: str  # the snap file's reason
+    what: str  # the log line's words
+    confidence: int | None
 
 
 def _decode(jpeg: bytes) -> tuple[np.ndarray | None, str | None]:
@@ -105,15 +133,15 @@ def _shown_event(event: LogEvent) -> LogEvent:
 
 
 def _person_dict(p: Person) -> dict:
-    red = is_red(p.reading.label)
     return {
         "letter": p.letter,
         "box": asdict(p.box),
         "label": p.reading.label,
         "confidence": p.reading.confidence,
-        "red": red,
-        "reason": person_line(p) if red else None,
+        "red": person_red(p.reading.label, p.ears_hidden),
+        "reason": person_line(p) if is_red(p.reading.label) else None,  # sleep red only
         "visible": p.visible,
+        "ear_line": ear_line(p),
     }
 
 
@@ -168,12 +196,24 @@ def _debug_lines(
 
 
 class Pipeline:
-    def __init__(self, finder, emotion, signer, files: SessionFiles, debug: bool = False):
+    def __init__(
+        self,
+        finder,
+        emotion,
+        signer,
+        files: SessionFiles,
+        debug: bool = False,
+        collector: EarCollector | None = None,
+        ears=None,
+        ears_off: bool = False,
+    ):
         self._finder = finder
         self._emotion = emotion
         self._signer = signer
         self._files = files
         self._debug_on = debug
+        self._collector = collector
+        self._ears = ears  # anything with covered(frame, face, sides), or None for no ear checks
         self._tracker = Tracker()
         self._identity = Identity()
         self._snaps = SnapPolicy()
@@ -184,6 +224,7 @@ class Pipeline:
         self._far_runs: dict[int, _FarRun] = {}  # by track
         self._crowded_frames = 0
         self._labels: dict[str, str] = {}
+        self._ear_logged: dict[str, EarStatus] = {}  # the last ear state each person's log saw
         self._red_proof: dict[str, _RedProof] = {}
         self._decisions: dict[str, IdentityDecision] = {}  # the latest, for the debug view
         self._alarm = False
@@ -193,8 +234,11 @@ class Pipeline:
         self._pending_warnings = self._record(
             [LogEvent(files.started, "System", "session started")]
         )
+        if ears_off:
+            self._pending_warnings.append(EAR_OFF_WARNING)
         self._last = FrameResult(
-            face_count_text(0), [], [], list(self._log), False, None, False, [] if debug else None
+            face_count_text(0), [], [], list(self._log), False, None, False, [] if debug else None,
+            collector.counts() if collector else None,
         )
 
     def process(self, jpeg: bytes, now_ms: float, at: datetime, delay_sec: float) -> FrameResult:
@@ -204,6 +248,8 @@ class Pipeline:
 
         warnings, self._pending_warnings = self._pending_warnings, []
         faces = self._find(frame, warnings)
+        if self._collector is not None:
+            self._collector.offer(frame, faces, now_ms)
         seen = dict(self._tracker.update(faces, now_ms))
         active_ids = self._tracker.active_ids()
         tracked = self._without_unconfirmed(seen, active_ids, now_ms)
@@ -212,7 +258,7 @@ class Pipeline:
         self._heavy_check(frame, tracked, now_ms, warnings)
 
         debug: list[str] = []
-        present = self._read_people(tracked, active_ids, now_ms, delay_sec, debug)
+        present = self._read_people(frame, tracked, active_ids, now_ms, delay_sec, debug, warnings)
         waiting = [
             Person(None, face.box, WAITING_READING, True)
             for track_id, face in tracked.items()
@@ -234,6 +280,7 @@ class Pipeline:
             warning=" ".join(dict.fromkeys(warnings)) or None,
             overflow=self._overflow(faces),
             debug=debug if self._debug_on else None,
+            collect_counts=self._collector.counts() if self._collector else None,
         )
         return self._last
 
@@ -249,6 +296,15 @@ class Pipeline:
         )
         write_warnings = self._record([event])
         return warning or (write_warnings[0] if write_warnings else None)
+
+    def set_collect(self, label: CollectLabel | None) -> None:
+        """Start a new photo run with this label, or stop the run when it is None."""
+        if self._collector is None:
+            return
+        if label is None:
+            self._collector.stop()
+        else:
+            self._collector.start(label, datetime.now().strftime("%Y%m%d-%H%M%S"))
 
     def debug_samples(self) -> list[dict]:
         return self._debug_buffer.samples()
@@ -395,13 +451,34 @@ class Pipeline:
             logger.exception("Emotion scoring failed")
             warnings.append(FACE_WARNING)
 
+    def _check_ears(
+        self,
+        frame: np.ndarray,
+        state: _PersonState,
+        face: RawFace,
+        now_ms: float,
+        warnings: list[str],
+    ) -> dict[Side, float] | None:
+        """Covered chances for this near face's ears, or None when no check is due or it failed."""
+        if self._ears is None or now_ms - state.ear_tried_ms < CONFIG.ear_interval_ms:
+            return None
+        state.ear_tried_ms = now_ms  # set first, so a failure is not retried on every frame
+        try:
+            return self._ears.covered(frame, face, sides_to_check(face.yaw_deg))
+        except Exception:
+            logger.exception("Ear check failed")
+            warnings.append(FACE_WARNING)
+            return None
+
     def _read_people(
         self,
+        frame: np.ndarray,
         tracked: dict[int, RawFace],
         active_ids: set[int],
         now_ms: float,
         delay_sec: float,
         debug: list[str],
+        warnings: list[str],
     ) -> dict[str, Person]:
         """Everyone with a letter and an active track, by state key, in panel order."""
         present: dict[str, Person] = {}
@@ -411,6 +488,7 @@ class Pipeline:
                 continue
             state = self._people.setdefault(key, _PersonState())
             face = tracked.get(track_id)
+            covered = None  # far and unseen faces get no check, so the grace rule ends the state
             if face is not None and face.far:
                 # Baseline and classifier hear nothing, so to them this is a gap like any other.
                 state.reading = FAR_READING
@@ -421,11 +499,17 @@ class Pipeline:
                     self._identity.clear_mismatches(track_id)
                 state.reading = state.classifier.update(signals, now_ms, delay_sec, state.emotion)
                 state.box = face.box
+                covered = self._check_ears(frame, state, face, now_ms, warnings)
                 if self._debug_on:
                     debug += self._debug_sample(key, face, signals, state, now_ms)
+            state.ear_status = state.ears.update(covered, now_ms)
             if state.reading is not None and state.box is not None:
                 present[key] = Person(
-                    _shown_letter(key), state.box, state.reading, face is not None
+                    _shown_letter(key),
+                    state.box,
+                    state.reading,
+                    face is not None,
+                    ears_hidden=state.ear_status == "hidden",
                 )
         order = sorted(present, key=lambda key: (key.startswith(UNKNOWN), key))
         return {key: present[key] for key in order}
@@ -466,8 +550,11 @@ class Pipeline:
         for key in self._labels:
             if key not in present:
                 self._forget_emotion(key)
+                self._forget_ears(key)
                 events += self._owed_snap(key, at, warnings)
+                events += self._owed_snap(key + EAR_KEY, at, warnings)
         self._labels = {key: r.label for key, r in readings.items()}
+        events += self._ear_events(present, at)
 
         alarm = should_sound(self._labels.values())
         if alarm != self._alarm:
@@ -475,16 +562,64 @@ class Pipeline:
         self._alarm = alarm
 
         for key, person in present.items():
+            ear_key = key + EAR_KEY
             if person.reading.label == "far":
                 events += self._owed_snap(key, at, warnings)  # as lost to the camera as leaving
+                events += self._owed_snap(ear_key, at, warnings)
                 continue
-            red = is_red(person.reading.label)
-            if self._snaps.update(key, red, now_ms, person.visible):
-                events.append(self._snap_event(frame, people, person, at, at, warnings))
-            if not red:
-                self._red_proof.pop(key, None)
-            elif person.visible:
-                self._red_proof[key] = _RedProof(frame, people, person, at)
+            label = person.reading.label
+            events += self._red_snap(
+                key, is_red(label), frame, people, person, now_ms, at, warnings,
+                label, label, person.reading.confidence,
+            )
+            if self._people[key].ear_status == "unknown":
+                # The ear state was dropped unchecked, so its run is as lost as a leaving one.
+                events += self._owed_snap(ear_key, at, warnings)
+            else:
+                events += self._red_snap(
+                    ear_key, person.ears_hidden, frame, people, person, now_ms, at, warnings,
+                    EAR_REASON, EAR_HIDDEN_LOG, None,
+                )
+        return events
+
+    def _red_snap(
+        self,
+        key: str,
+        red: bool,
+        frame: np.ndarray,
+        people: list[Person],
+        person: Person,
+        now_ms: float,
+        at: datetime,
+        warnings: list[str],
+        reason: str,
+        what: str,
+        confidence: int | None,
+    ) -> list[LogEvent]:
+        """One frame of one red run: its snap once earned, and its last visible frame kept."""
+        events = []
+        if self._snaps.update(key, red, now_ms, person.visible):
+            events.append(
+                self._snap_event(frame, people, person, at, at, warnings, reason, what, confidence)
+            )
+        if not red:
+            self._red_proof.pop(key, None)
+        elif person.visible:
+            self._red_proof[key] = _RedProof(frame, people, person, at, reason, what, confidence)
+        return events
+
+    def _ear_events(self, present: dict[str, Person], at: datetime) -> list[LogEvent]:
+        """Log ears going hidden and coming back into view. A state dropped unchecked is quiet."""
+        events = []
+        for key in present:
+            before = self._ear_logged.get(key, "unknown")
+            now = self._people[key].ear_status
+            self._ear_logged[key] = now
+            who = f"Person {key}"
+            if now == "hidden" and before != "hidden":
+                events.append(_shown_event(LogEvent(at, who, EAR_HIDDEN_LOG)))
+            elif now == "visible" and before == "hidden":
+                events.append(_shown_event(LogEvent(at, who, EAR_VISIBLE_LOG)))
         return events
 
     def _owed_snap(self, key: str, at: datetime, warnings: list[str]) -> list[LogEvent]:
@@ -493,7 +628,12 @@ class Pipeline:
         proof = self._red_proof.pop(key, None)
         if not owed or proof is None:
             return []
-        return [self._snap_event(proof.frame, proof.people, proof.person, proof.at, at, warnings)]
+        return [
+            self._snap_event(
+                proof.frame, proof.people, proof.person, proof.at, at, warnings,
+                proof.reason, proof.what, proof.confidence,
+            )
+        ]
 
     def _forget_emotion(self, key: str) -> None:
         """Once released, the last scores are stale: they must not label a return."""
@@ -501,6 +641,15 @@ class Pipeline:
         if state is not None:
             state.emotion = None
             state.emotion_tried_ms = -math.inf
+
+    def _forget_ears(self, key: str) -> None:
+        """Once released, a return starts with no ear state and no log line owed."""
+        self._ear_logged.pop(key, None)
+        state = self._people.get(key)
+        if state is not None:
+            state.ears = EarWatch()
+            state.ear_tried_ms = -math.inf
+            state.ear_status = "unknown"
 
     def _snap_event(
         self,
@@ -510,15 +659,17 @@ class Pipeline:
         shown_at: datetime,
         at: datetime,
         warnings: list[str],
+        reason: str,
+        what: str,
+        confidence: int | None,
     ) -> LogEvent:
         """Save a red person's snap, named for when the frame was seen. Logged as of at."""
         who = f"Person {person.letter}"
-        label = person.reading.label
-        path, warning = self._save_snap(frame, people, shown_at, person.letter, label)
+        path, warning = self._save_snap(frame, people, shown_at, person.letter, reason)
         if warning:
             warnings.append(warning)
             return LogEvent(at, who, "snap failed")
-        return LogEvent(at, who, label, person.reading.confidence, path)
+        return LogEvent(at, who, what, confidence, path)
 
     def _save_snap(
         self, frame: np.ndarray, people: list[Person], at: datetime, letter: str, reason: str

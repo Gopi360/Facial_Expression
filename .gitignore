@@ -6,3 +6,5 @@ models/
 logs/
 snaps/
 .env
+dataset/
+.venv-train/
