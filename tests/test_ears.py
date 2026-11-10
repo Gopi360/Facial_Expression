@@ -137,3 +137,15 @@ def test_side_switch_keeps_state():
     w = EarWatch()
     checks = [(0, {"left": 0.9}), (333, {"left": 0.9, "right": 0.2}), (666, {"left": 0.9}), (1000, {"left": 0.9, "right": 0.2})]
     assert _run(w, checks)[-1] == "hidden"
+
+
+def test_gap_before_new_check_starts_fresh_run():
+    w = EarWatch()
+    _run(w, [(0, COVERED), (333, COVERED), (666, COVERED)])
+    assert w.update(COVERED, 5000) != "hidden"
+    assert w.update(COVERED, 5333) != "hidden"
+
+
+def test_gap_after_hidden_then_clear_is_visible_at_once():
+    w = _hidden_watch()
+    assert w.update(CLEAR, 1000 + 3000) == "visible"

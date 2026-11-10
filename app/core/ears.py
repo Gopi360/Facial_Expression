@@ -44,10 +44,10 @@ class EarWatch:
 
     def update(self, covered: dict[Side, float] | None, now_ms: float) -> EarStatus:
         """Feed one frame. `covered` maps each checked side to its covered probability; None or {} is no check."""
+        if self._last_check is not None and now_ms - self._last_check >= CONFIG.ear_unchecked_grace_ms:
+            self._status = "unknown"  # grace applies on every call, so a person who left starts fresh
+            self._run_start = None
         if not covered:
-            if self._last_check is not None and now_ms - self._last_check >= CONFIG.ear_unchecked_grace_ms:
-                self._status = "unknown"
-                self._run_start = None
             return self._status
 
         self._last_check = now_ms
