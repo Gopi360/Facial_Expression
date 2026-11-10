@@ -7,6 +7,8 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
@@ -17,7 +19,7 @@ from websockets.sync.client import connect
 import app.server as server
 from app.core.config import CONFIG
 from app.models import ModelsMissing
-from app.pipeline import FrameResult
+from app.pipeline import EAR_OFF_WARNING, FrameResult
 from app.server import create_app
 
 JPEG = b"\xff\xd8 pretend jpeg"
@@ -558,7 +560,8 @@ class FakeModel:
 
 
 class FakeFinder(FakeModel):
-    pass
+    def find(self, frame):
+        return []
 
 
 class FakeEmotion(FakeModel):
@@ -573,6 +576,7 @@ class FakeSigner(FakeModel):
 def real_factory(monkeypatch, tmp_path):
     for cls in (FakeFinder, FakeEmotion, FakeSigner):
         cls.loads = 0
+    monkeypatch.setattr(server, "EarModel", absent_ears)
     monkeypatch.setattr(server, "FaceFinder", FakeFinder)
     monkeypatch.setattr(server, "EmotionModel", FakeEmotion)
     monkeypatch.setattr(server, "FaceSigner", FakeSigner)
@@ -599,3 +603,51 @@ def test_failed_model_load_is_tried_again(real_factory, monkeypatch):
 
     monkeypatch.setattr(server, "FaceSigner", FakeSigner)
     server.make_pipeline(False, False)
+
+
+JPEG = cv2.imencode(".jpg", np.zeros((64, 64, 3), np.uint8))[1].tobytes()
+NOW = datetime(2026, 11, 10, 12, 0, 0)
+
+
+class FakeEars(FakeModel):
+    pass
+
+
+def absent_ears(models_dir):
+    raise ModelsMissing("no ears")
+
+
+def process_two_frames(pipeline):
+    first = pipeline.process(JPEG, 0, NOW, 1)
+    second = pipeline.process(JPEG, 100, NOW, 1)
+    return first, second
+
+
+def test_missing_ear_model_runs_without_ears(real_factory, monkeypatch):
+    monkeypatch.setattr(server, "EarModel", absent_ears)
+    pipeline = server.make_pipeline(False, False)
+    assert pipeline._ears is None
+    first, second = process_two_frames(pipeline)
+    assert EAR_OFF_WARNING in first.warning
+    assert not second.warning or EAR_OFF_WARNING not in second.warning
+
+
+def test_present_ear_model_is_passed_on_and_loaded_once(real_factory, monkeypatch):
+    FakeEars.loads = 0
+    monkeypatch.setattr(server, "EarModel", FakeEars)
+    first = server.make_pipeline(False, False)
+    second = server.make_pipeline(False, False)
+    assert isinstance(first._ears, FakeEars)
+    assert FakeEars.loads == 1
+    assert EAR_OFF_WARNING not in (first.process(JPEG, 0, NOW, 1).warning or "")
+    assert second._ears is first._ears
+
+
+def test_corrupt_ear_model_is_treated_as_missing(tmp_path):
+    (tmp_path / "ears.onnx").write_bytes(b"not a model")
+    (tmp_path / "ears.json").write_text('{"mean": [0, 0, 0]}', encoding="utf-8")
+    assert server._load_ear_model(tmp_path) is None
+
+
+def test_missing_ear_files_are_treated_as_missing(tmp_path):
+    assert server._load_ear_model(tmp_path) is None

@@ -1,17 +1,17 @@
 # Project Handover
 
-Last updated: 2026-11-10. Read this first when starting a new chat.
+Last updated: 2026-11-10 (Stage 2a built). Read this first when starting a new chat.
 
 ## Where things stand
 
-A local Python demo that reads the laptop camera and shows each person's expression, sounds an alarm for sleep, and keeps a log and snaps of red marks. Stage 1 is built and working on real people, and is merged into `main` (merge commit `be7b9fb`, 2026-11-10). Stage 2a (ear visibility) is being designed on `feat/stage-2a-ears`.
+A local Python demo that reads the laptop camera and shows each person's expression, sounds an alarm for sleep, and keeps a log and snaps of red marks. Stage 1 is built and working on real people, and is merged into `main` (merge commit `be7b9fb`, 2026-11-10). Stage 2a (ear visibility) is built on `feat/stage-2a-ears`, awaiting the owner's photos, training and on-camera checks.
 
 - **`main`:** Stage 1, merged locally and pushed.
 - **Work branch:** `feat/stage-2a-ears`, for Stage 2a.
 - **`feat/python-rebuild`:** the Stage 1 work branch, now merged.
 - **GitHub:** https://github.com/Gopi360/Facial_Expression (public). All three branches are pushed.
 - **`feat/expression-demo`:** the old TypeScript version, kept for reference.
-- **Tests:** 451 passing. Run `.venv\Scripts\python -m pytest -q`.
+- **Tests:** 511 passing, 1 skipped. Run `.venv\Scripts\python -m pytest -q`.
 - **Start the app:** `.venv\Scripts\python -m uvicorn app.server:app --host 127.0.0.1 --port 8000`, then open `http://127.0.0.1:8000/`. Add `?debug=1` for raw numbers.
 - **Fresh machine:** follow the setup steps in `README.md`. `models/`, `logs/`, `snaps/` and `.venv/` are not in Git.
 
@@ -22,6 +22,10 @@ A local Python demo that reads the laptop camera and shows each person's express
 | `docs/superpowers/specs/2026-11-06-python-rebuild-design.md` | Approved design for Stage 1, plus Stage 2 notes in section 12 |
 | `docs/superpowers/plans/2026-11-06-python-rebuild.md` | Stage 1 build plan, all 8 tasks done |
 | `docs/superpowers/python-rebuild-ledger.md` | Full record of task reviews, rulings and deferred minor issues |
+| `docs/superpowers/specs/2026-11-10-stage-2a-ear-visibility-design.md` | Design for Stage 2a (ear visibility), section 9 lists the on-camera checks |
+| `docs/superpowers/plans/2026-11-10-stage-2a-ear-visibility.md` | Stage 2a build plan, Tasks 1 to 6 built |
+| `training/README.md` | How to set up `.venv-train`, collect photos, train and read the report |
+| `docs/superpowers/python-rebuild-ledger.md` | Also holds the Stage 2a deferred-items pointer, at the end |
 | `docs/superpowers/specs/2026-11-06-facial-expression-demo-design.md` | Old TypeScript design, replaced |
 | `docs/superpowers/plans/2026-11-06-facial-expression-demo.md` | Old TypeScript plan, replaced |
 
@@ -38,8 +42,15 @@ A local Python demo that reads the laptop camera and shows each person's express
 | Wall calendar picked up as a far person | **Not tested yet** |
 | Two people close: "running slowly" warning | **Not tested yet** |
 
+## Stage 2a status
+
+Built: photo mode (`?collect=1`), the training script, the ear model wrapper, the ear state with hold times, the red flag with snap and log line, and the page's second line. **Not done: the owner's photos, training, and the 8 on-camera checks (spec section 9).** Until `models/ears.onnx` and `models/ears.json` exist, the app runs with the ear check off and says so once.
+
+On-camera results: **not recorded yet.** Fill these in when the checks are run: sitting normally, head turns and keyboard, hand over one ear, hand removed, hair over an ear, sleep still sounds, frame rate (time per ear crop and one-face frame rate), and the training report. Then tune `ear_covered_at`, the hold times, `ear_offset_frac`, `ear_square_frac` and `ear_yaw_sign` one at a time, and pin the numbers with `test_owner_ears_*` tests.
+
 ## Pending work, in order
 
+0. **Stage 2a: photos, training, on-camera checks.** Follow `training/README.md`, then the checks above.
 1. **Finish the three untested checks above** when a second person and a wall picture are available. Deferred on 2026-11-10, not a blocker.
 2. **Stage 2: ear and device detection.** Split by the owner: 2a ears visible or not (design: `docs/superpowers/specs/2026-11-10-stage-2a-ear-visibility-design.md`), then 2b EarPods. See below.
 3. **Small known issues**, listed below.
@@ -91,4 +102,4 @@ Facts already found:
 - A wall picture can appear as a far person, and keeps a letter if the real person never returns.
 - A person drifting asleep inside the frontal zone with a low score can lose a letter. Real scores are unmeasured.
 - Real `anchor_score` at head pitch 15 to 30 hasn't been measured on camera.
-- More deferred items are in the ledger, under lines marked `minor (deferred)`.
+- More deferred items are in the ledger, under lines marked `minor (deferred)`. Stage 2a's are in `.superpowers/sdd/2026-11-10-stage-2a-ear-visibility/progress.md` (a git-ignored working file), under the same marker, and the ledger points there.

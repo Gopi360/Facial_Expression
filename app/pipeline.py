@@ -54,6 +54,7 @@ WAITING_READING = Reading("neutral", 0)  # shown for a face with no letter, neve
 FAR_READING = Reading("far", 0)  # nothing can be read at this size, so the number means nothing
 MANUAL_LETTER = "all"
 MANUAL_REASON = "manual"
+EAR_OFF_WARNING = "Ear check is off: models/ears.onnx was not found."
 EAR_REASON = "ears"  # in the ear snap's file name
 EAR_KEY = "#ears"  # added to a state key for the ear snap's own red run
 
@@ -204,6 +205,7 @@ class Pipeline:
         debug: bool = False,
         collector: EarCollector | None = None,
         ears=None,
+        ears_off: bool = False,
     ):
         self._finder = finder
         self._emotion = emotion
@@ -232,6 +234,8 @@ class Pipeline:
         self._pending_warnings = self._record(
             [LogEvent(files.started, "System", "session started")]
         )
+        if ears_off:
+            self._pending_warnings.append(EAR_OFF_WARNING)
         self._last = FrameResult(
             face_count_text(0), [], [], list(self._log), False, None, False, [] if debug else None,
             collector.counts() if collector else None,

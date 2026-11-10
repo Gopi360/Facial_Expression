@@ -79,3 +79,4 @@ Ruling: Far tracks don't hold a letter against a near frontal match — a wall p
 Ruling: Non-frontal checks fail only on a clearly low score, under identity_check_fail_at 0.2, and the nod rule starts at frontal_pitch_delta_deg — protects a drowsy real person — cost if wrong: a stranger who scores 0.2-0.36 while tilted keeps a letter longer.
 Far work: fix round 1 re-reviewed, all addressed (0689a41..6d7e9ac). Minors deferred: flickering far views can keep a red person's alarm on past 2s; 2.5s closure plus a short loss can flash sleeping; rare drowsy under 3 fps.
 Ruling: Accept strongDip-style extras: far_max_width_px 100, far_same_face_overlap, far_every_frames 2 — cost if wrong: config tuning.
+Stage 2a: minor deferred items are kept in `.superpowers/sdd/2026-11-10-stage-2a-ear-visibility/progress.md`, on lines marked `minor (deferred)`. Review them before the Stage 2a branch is merged.

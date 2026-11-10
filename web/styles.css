@@ -133,6 +133,10 @@ body {
   font-weight: 600;
 }
 
+.strip-ear {
+  padding-left: 1.5em;
+}
+
 .debug {
   margin: 0;
   overflow-x: auto;

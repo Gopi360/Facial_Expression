@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .collect import COLLECT_LABELS, EarCollector
 from .core.config import CONFIG
-from .models import EmotionModel, FaceFinder, FaceSigner, ModelsMissing
+from .models import EarModel, EmotionModel, FaceFinder, FaceSigner, ModelsMissing
 from .pipeline import Pipeline
 from .session_files import SessionFiles
 
@@ -58,25 +58,42 @@ PAGE_CONFIG = (
     "low_fps_hold_ms",
 )
 
-_models: tuple[FaceFinder, EmotionModel, FaceSigner] | None = None
+_models: tuple[FaceFinder, EmotionModel, FaceSigner, EarModel | None] | None = None
 _models_lock = threading.Lock()
 
 
-def _loaded_models() -> tuple[FaceFinder, EmotionModel, FaceSigner]:
+def _load_ear_model(models_dir: Path) -> EarModel | None:
+    """The ear model is optional: a missing or broken one means the ear check is off."""
+    try:
+        return EarModel(models_dir)
+    except ModelsMissing:
+        logger.warning("No ear model in %s, so the ear check is off", models_dir)
+    except Exception:
+        logger.exception("Could not load the ear model, so the ear check is off")
+    return None
+
+
+def _loaded_models() -> tuple[FaceFinder, EmotionModel, FaceSigner, EarModel | None]:
     """Load the models on first use and keep them for every later session."""
     global _models
     with _models_lock:
         if _models is None:
             models_dir = ROOT / "models"
-            _models = (FaceFinder(models_dir), EmotionModel(models_dir), FaceSigner(models_dir))
+            _models = (
+                FaceFinder(models_dir),
+                EmotionModel(models_dir),
+                FaceSigner(models_dir),
+                _load_ear_model(models_dir),
+            )
         return _models
 
 
 def make_pipeline(debug: bool, collect: bool = False) -> Pipeline:
-    finder, emotion, signer = _loaded_models()
+    finder, emotion, signer, ears = _loaded_models()
     collector = EarCollector(ROOT) if collect else None
     return Pipeline(
-        finder, emotion, signer, SessionFiles(ROOT, datetime.now()), debug, collector
+        finder, emotion, signer, SessionFiles(ROOT, datetime.now()), debug, collector,
+        ears=ears, ears_off=ears is None,
     )
 
 
