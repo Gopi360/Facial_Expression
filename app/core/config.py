@@ -91,7 +91,7 @@ class Config:
 
     # ears
     ear_both_yaw_deg: float = 20  # under this turn both ears are checked
-    ear_yaw_sign: int = 1  # flip if the wrong ear is checked when turned; confirm on camera
+    ear_yaw_sign: int = -1  # -1 measured on camera 2026-11-10: +1 checked the ear turned away
     ear_offset_frac: float = 0.10  # square centre, outward from the face edge, x face width
     ear_square_frac: float = 0.45  # square side, x face width
     collect_interval_ms: int = 300  # photo mode saves at most once per this

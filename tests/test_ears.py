@@ -11,6 +11,7 @@ def test_straight_checks_both():
 
 
 def test_turned_checks_facing_ear(monkeypatch):
+    monkeypatch.setattr(ears, "CONFIG", replace(CONFIG, ear_yaw_sign=1))
     assert sides_to_check(25) == ("left",)
     assert sides_to_check(-25) == ("right",)
     monkeypatch.setattr(ears, "CONFIG", replace(CONFIG, ear_yaw_sign=-1))

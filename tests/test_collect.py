@@ -47,7 +47,7 @@ def test_left_covered_sorts_each_ear(tmp_path):
 def test_turned_saves_only_facing_ear(tmp_path):
     collector = EarCollector(tmp_path)
     collector.start("both_clear", "run")
-    collector.offer(frame(), [face(yaw=30)], 0)
+    collector.offer(frame(), [face(yaw=30 * CONFIG.ear_yaw_sign)], 0)  # turned so the left ear faces the camera
     assert len(names(tmp_path, "clear")) == 1
     assert names(tmp_path, "clear")[0].endswith("_left.png")
     assert names(tmp_path, "covered") == []
