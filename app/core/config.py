@@ -95,6 +95,11 @@ class Config:
     ear_offset_frac: float = 0.10  # square centre, outward from the face edge, x face width
     ear_square_frac: float = 0.45  # square side, x face width
     ear_input_px: int = 96  # ear model input side; training and the app must agree
+    ear_interval_ms: int = 333  # how often the ear model runs per person
+    ear_covered_at: float = 0.8  # cautious start; tune on camera
+    ear_hidden_hold_ms: int = 1000  # covered checks for this long before red
+    ear_clear_hold_ms: int = 500  # clear checks for this long before red clears
+    ear_unchecked_grace_ms: int = 2000  # no check for this long drops the state quietly
     collect_interval_ms: int = 300  # photo mode saves at most once per this
 
 
