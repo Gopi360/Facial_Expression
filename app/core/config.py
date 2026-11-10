@@ -94,6 +94,7 @@ class Config:
     ear_yaw_sign: int = -1  # -1 measured on camera 2026-11-10: +1 checked the ear turned away
     ear_offset_frac: float = 0.10  # square centre, outward from the face edge, x face width
     ear_square_frac: float = 0.45  # square side, x face width
+    ear_input_px: int = 96  # ear model input side; training and the app must agree
     collect_interval_ms: int = 300  # photo mode saves at most once per this
 
 
