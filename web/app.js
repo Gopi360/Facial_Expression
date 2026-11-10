@@ -34,6 +34,19 @@ const snapshotButton = document.getElementById('snapshot');
 const debugOn = new URLSearchParams(window.location.search).get('debug') === '1';
 debugPanel.hidden = !debugOn;
 
+const collectOn = new URLSearchParams(window.location.search).get('collect') === '1';
+const collectPanel = document.getElementById('collect-panel');
+const collectCounts = document.getElementById('collect-counts');
+const collectButtons = collectPanel.querySelectorAll('[data-collect]');
+collectPanel.hidden = !collectOn;
+
+function setCollect(label) {
+  send({ type: 'collect', label });
+  collectButtons.forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.collect === label));
+  });
+}
+
 // Off-screen, so the frames sent to the server are the unflipped video.
 const capture = document.createElement('canvas');
 
@@ -317,6 +330,9 @@ function onFrameReply(reply) {
   drawOverlay(reply.people);
   renderStrip(reply);
   renderLog(reply.log);
+  if (collectOn && reply.collect_counts) {
+    collectCounts.textContent = `clear: ${reply.collect_counts.clear}, covered: ${reply.collect_counts.covered}`;
+  }
   if (debugOn) debug.textContent = (reply.debug ?? []).join('\n');
   if (reply.warning) showBriefly(reply.warning, config.warning_hold_ms);
   watchFrameRate();
@@ -441,7 +457,7 @@ function openSocket() {
     endSession(LOST_MESSAGE);
     return;
   }
-  socket.addEventListener('open', () => send({ type: 'start', debug: debugOn }));
+  socket.addEventListener('open', () => send({ type: 'start', debug: debugOn, collect: collectOn }));
   socket.addEventListener('message', onSocketMessage);
   socket.addEventListener('close', () => {
     if (!sessionOver) endSession(lastError ?? LOST_MESSAGE);
@@ -500,6 +516,10 @@ delaySlider.addEventListener('input', () => {
 
 snapshotButton.addEventListener('click', () => send({ type: 'snapshot' }));
 debugDownloadButton.addEventListener('click', () => send({ type: 'debug_dump' }));
+collectButtons.forEach((button) => {
+  button.addEventListener('click', () => setCollect(button.dataset.collect));
+});
+document.getElementById('collect-stop').addEventListener('click', () => setCollect(null));
 
 async function loadConfig() {
   try {

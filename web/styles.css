@@ -236,3 +236,28 @@ body {
   color: var(--muted);
   font-size: 13px;
 }
+
+.collect-panel {
+  margin-top: 8px;
+}
+
+.collect-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.collect-buttons .button {
+  width: auto;
+}
+
+.collect-buttons .button[aria-pressed='true'] {
+  outline: 2px solid var(--line);
+  font-weight: 600;
+}
+
+.collect-note,
+.collect-counts {
+  margin: 8px 0 0;
+  font-size: 13px;
+}

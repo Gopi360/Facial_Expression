@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
+from .collect import COLLECT_LABELS, EarCollector
 from .core.config import CONFIG
 from .models import EmotionModel, FaceFinder, FaceSigner, ModelsMissing
 from .pipeline import Pipeline
@@ -71,9 +72,12 @@ def _loaded_models() -> tuple[FaceFinder, EmotionModel, FaceSigner]:
         return _models
 
 
-def make_pipeline(debug: bool) -> Pipeline:
+def make_pipeline(debug: bool, collect: bool = False) -> Pipeline:
     finder, emotion, signer = _loaded_models()
-    return Pipeline(finder, emotion, signer, SessionFiles(ROOT, datetime.now()), debug)
+    collector = EarCollector(ROOT) if collect else None
+    return Pipeline(
+        finder, emotion, signer, SessionFiles(ROOT, datetime.now()), debug, collector
+    )
 
 
 def _is_number(value: object) -> bool:
@@ -101,11 +105,12 @@ class _Session:
     a pipeline call is running. Only run() acts on the inbox, which keeps the calls in turn.
     """
 
-    def __init__(self, socket: WebSocket, make: Callable[[bool], Pipeline]):
+    def __init__(self, socket: WebSocket, make: Callable[[bool, bool], Pipeline]):
         self._socket = socket
         self._make = make
         self._pipeline: Pipeline | None = None
         self._debug = False
+        self._collect = False
         self._delay_sec: float = CONFIG.default_delay_sec
         self._inbox: asyncio.Queue[dict] = asyncio.Queue()
         self._gone = asyncio.Event()
@@ -182,6 +187,8 @@ class _Session:
         reply = {"type": "frame", **asdict(result)}
         if not self._debug:
             del reply["debug"]
+        if reply.get("collect_counts") is None:
+            del reply["collect_counts"]
         await self._socket.send_json(reply)
 
     async def _on_text(self, text: str | None) -> None:
@@ -196,6 +203,8 @@ class _Session:
             await self._on_start(message)
         elif kind == "settings":
             await self._on_settings(message)
+        elif kind == "collect":
+            await self._on_collect(message)
         elif kind not in ("snapshot", "debug_dump"):
             await self._error(BAD_MESSAGE)
         elif self._pipeline is None:
@@ -213,8 +222,18 @@ class _Session:
             await self._error(ALREADY_STARTED)
             return
         self._debug = message.get("debug") is True
-        self._pipeline = await asyncio.to_thread(self._make, self._debug)
+        self._collect = message.get("collect") is True
+        self._pipeline = await asyncio.to_thread(self._make, self._debug, self._collect)
         await self._socket.send_json({"type": "ready"})
+
+    async def _on_collect(self, message: dict) -> None:
+        label = message.get("label")
+        if self._pipeline is None:
+            await self._error(NOT_STARTED)
+        elif not self._collect or not (label is None or label in COLLECT_LABELS):
+            await self._error(BAD_MESSAGE)
+        else:
+            await self._guarded(self._pipeline.set_collect, label)
 
     async def _on_settings(self, message: dict) -> None:
         delay = message.get("delaySec")
@@ -242,7 +261,7 @@ class _Session:
             logger.exception("Could not close the session")
 
 
-def create_app(make: Callable[[bool], Pipeline]) -> FastAPI:
+def create_app(make: Callable[[bool, bool], Pipeline]) -> FastAPI:
     app = FastAPI()
     session_open = False
 

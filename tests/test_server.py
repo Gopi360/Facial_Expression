@@ -27,8 +27,10 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
 class FakePipeline:
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, collect=False):
         self.debug = debug
+        self.collect = collect
+        self.collect_labels = []
         self.frames = []
         self.snapshots = []
         self.closed = []
@@ -66,6 +68,9 @@ class FakePipeline:
         self.snapshots.append(at)
         return self.snapshot_warning
 
+    def set_collect(self, label):
+        self.collect_labels.append(label)
+
     def debug_samples(self):
         return [{"t_ms": 1.0, "letter": "A"}]
 
@@ -79,10 +84,10 @@ class Factory:
         self.made = []
         self.error = None
 
-    def __call__(self, debug):
+    def __call__(self, debug, collect=False):
         if self.error:
             raise self.error
-        self.made.append(FakePipeline(debug))
+        self.made.append(FakePipeline(debug, collect))
         return self.made[-1]
 
 
@@ -96,8 +101,8 @@ def client(factory):
     return TestClient(create_app(factory))
 
 
-def start(ws, debug=False):
-    ws.send_json({"type": "start", "debug": debug})
+def start(ws, debug=False, collect=False):
+    ws.send_json({"type": "start", "debug": debug, "collect": collect})
     assert ws.receive_json() == {"type": "ready"}
 
 
@@ -149,6 +154,33 @@ def test_debug_dump_returns_the_samples(client):
             "type": "debug_dump",
             "samples": [{"t_ms": 1.0, "letter": "A"}],
         }
+
+
+def test_collect_message_needs_collect_session(client, factory):
+    with client.websocket_connect("/ws") as ws:
+        start(ws)
+        ws.send_json({"type": "collect", "label": "left_covered"})
+        assert ws.receive_json() == {"type": "error", "message": server.BAD_MESSAGE}
+    assert factory.made[0].collect_labels == []
+
+
+def test_collect_session_passes_label(client, factory):
+    with client.websocket_connect("/ws") as ws:
+        start(ws, collect=True)
+        ws.send_json({"type": "collect", "label": "left_covered"})
+        ws.send_json({"type": "collect", "label": None})
+        ws.send_bytes(JPEG)
+        assert ws.receive_json()["type"] == "frame"
+    assert factory.made[0].collect is True
+    assert factory.made[0].collect_labels == ["left_covered", None]
+
+
+def test_collect_message_with_unknown_label_gets_an_error(client, factory):
+    with client.websocket_connect("/ws") as ws:
+        start(ws, collect=True)
+        ws.send_json({"type": "collect", "label": "nonsense"})
+        assert ws.receive_json() == {"type": "error", "message": server.BAD_MESSAGE}
+    assert factory.made[0].collect_labels == []
 
 
 def test_second_client_is_told_busy(client, factory):
@@ -550,8 +582,8 @@ def real_factory(monkeypatch, tmp_path):
 
 
 def test_models_load_once_and_each_session_gets_a_new_pipeline(real_factory):
-    first = server.make_pipeline(False)
-    second = server.make_pipeline(False)
+    first = server.make_pipeline(False, False)
+    second = server.make_pipeline(False, False)
     assert first is not second
     assert (FakeFinder.loads, FakeEmotion.loads, FakeSigner.loads) == (1, 1, 1)
     assert list((real_factory / "logs").glob("session-*.log"))
@@ -563,7 +595,7 @@ def test_failed_model_load_is_tried_again(real_factory, monkeypatch):
 
     monkeypatch.setattr(server, "FaceSigner", missing)
     with pytest.raises(ModelsMissing):
-        server.make_pipeline(False)
+        server.make_pipeline(False, False)
 
     monkeypatch.setattr(server, "FaceSigner", FakeSigner)
-    server.make_pipeline(False)
+    server.make_pipeline(False, False)

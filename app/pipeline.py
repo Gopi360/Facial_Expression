@@ -9,6 +9,7 @@ from datetime import datetime
 import cv2
 import numpy as np
 
+from .collect import CollectLabel, EarCollector
 from .core.classifier import PersonClassifier
 from .core.config import CONFIG
 from .core.debug_log import WATCHED, DebugBuffer
@@ -48,6 +49,7 @@ class FrameResult:
     warning: str | None
     overflow: bool
     debug: list[str] | None
+    collect_counts: dict[str, int] | None = None  # None unless photo mode is on
 
 
 @dataclass
@@ -168,12 +170,21 @@ def _debug_lines(
 
 
 class Pipeline:
-    def __init__(self, finder, emotion, signer, files: SessionFiles, debug: bool = False):
+    def __init__(
+        self,
+        finder,
+        emotion,
+        signer,
+        files: SessionFiles,
+        debug: bool = False,
+        collector: EarCollector | None = None,
+    ):
         self._finder = finder
         self._emotion = emotion
         self._signer = signer
         self._files = files
         self._debug_on = debug
+        self._collector = collector
         self._tracker = Tracker()
         self._identity = Identity()
         self._snaps = SnapPolicy()
@@ -194,7 +205,8 @@ class Pipeline:
             [LogEvent(files.started, "System", "session started")]
         )
         self._last = FrameResult(
-            face_count_text(0), [], [], list(self._log), False, None, False, [] if debug else None
+            face_count_text(0), [], [], list(self._log), False, None, False, [] if debug else None,
+            collector.counts() if collector else None,
         )
 
     def process(self, jpeg: bytes, now_ms: float, at: datetime, delay_sec: float) -> FrameResult:
@@ -204,6 +216,8 @@ class Pipeline:
 
         warnings, self._pending_warnings = self._pending_warnings, []
         faces = self._find(frame, warnings)
+        if self._collector is not None:
+            self._collector.offer(frame, faces, now_ms)
         seen = dict(self._tracker.update(faces, now_ms))
         active_ids = self._tracker.active_ids()
         tracked = self._without_unconfirmed(seen, active_ids, now_ms)
@@ -234,6 +248,7 @@ class Pipeline:
             warning=" ".join(dict.fromkeys(warnings)) or None,
             overflow=self._overflow(faces),
             debug=debug if self._debug_on else None,
+            collect_counts=self._collector.counts() if self._collector else None,
         )
         return self._last
 
@@ -249,6 +264,15 @@ class Pipeline:
         )
         write_warnings = self._record([event])
         return warning or (write_warnings[0] if write_warnings else None)
+
+    def set_collect(self, label: CollectLabel | None) -> None:
+        """Start a new photo run with this label, or stop the run when it is None."""
+        if self._collector is None:
+            return
+        if label is None:
+            self._collector.stop()
+        else:
+            self._collector.start(label, datetime.now().strftime("%Y%m%d-%H%M%S"))
 
     def debug_samples(self) -> list[dict]:
         return self._debug_buffer.samples()
