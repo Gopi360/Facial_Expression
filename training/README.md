@@ -31,6 +31,8 @@ About 100 to 200 per label, taken over several Start-to-Stop runs (the split is 
 
 Optional: `--epochs N` (default 8, total passes: the first half trains only the new last layer, the second half also trains the last blocks at a lower rate). It writes `models\ears.onnx` and `models\ears.json` (`{"labels": [...], "input_px": 96}`, labels are the sorted folder names).
 
+**Restart the app after training.** The server loads `models\ears.onnx` once and remembers a missing model until it stops. Stop it, start it again and reload the page: the "Ear check is off" warning then no longer shows.
+
 ## 5. Read the report
 
 - Held-out accuracy per label: the share of test photos of each label that it got right. The test photos come from whole runs the model never saw.

@@ -25,7 +25,7 @@ A local Python demo that reads the laptop camera and shows each person's express
 | `docs/superpowers/specs/2026-11-10-stage-2a-ear-visibility-design.md` | Design for Stage 2a (ear visibility), section 9 lists the on-camera checks |
 | `docs/superpowers/plans/2026-11-10-stage-2a-ear-visibility.md` | Stage 2a build plan, Tasks 1 to 6 built |
 | `training/README.md` | How to set up `.venv-train`, collect photos, train and read the report |
-| `docs/superpowers/python-rebuild-ledger.md` | Also holds the Stage 2a deferred-items pointer, at the end |
+| `docs/superpowers/stage-2a-ledger.md` | Stage 2a rulings, fix rounds and deferred minor issues, by task |
 | `docs/superpowers/specs/2026-11-06-facial-expression-demo-design.md` | Old TypeScript design, replaced |
 | `docs/superpowers/plans/2026-11-06-facial-expression-demo.md` | Old TypeScript plan, replaced |
 
@@ -102,4 +102,4 @@ Facts already found:
 - A wall picture can appear as a far person, and keeps a letter if the real person never returns.
 - A person drifting asleep inside the frontal zone with a low score can lose a letter. Real scores are unmeasured.
 - Real `anchor_score` at head pitch 15 to 30 hasn't been measured on camera.
-- More deferred items are in the ledger, under lines marked `minor (deferred)`. Stage 2a's are in `.superpowers/sdd/2026-11-10-stage-2a-ear-visibility/progress.md` (a git-ignored working file), under the same marker, and the ledger points there.
+- More deferred items are in the ledger, under lines marked `minor (deferred)`. Stage 2a's are in `docs/superpowers/stage-2a-ledger.md`, with its rulings and fix rounds.
